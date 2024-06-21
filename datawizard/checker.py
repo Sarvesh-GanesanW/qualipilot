@@ -41,7 +41,8 @@ class DataQualityChecker:
             duplicate_rows = self.df[self.df.duplicated()]
             return duplicate_rows.to_pandas()
         else:
-            duplicate_rows = self.df[self.df.duplicated()].compute()
+            duplicated_mask = self.df.map_partitions(lambda df: df.duplicated(keep=False))
+            duplicate_rows = self.df[duplicated_mask].compute()
             return duplicate_rows
 
     def check_data_types(self):
@@ -49,7 +50,7 @@ class DataQualityChecker:
             data_types = self.df.dtypes
             return pd.Series(data_types, name='Data Types')
         else:
-            data_types = self.df.dtypes.compute()
+            data_types = self.df.dtypes
             return data_types
 
     def check_outliers(self, threshold=1.5):

@@ -1,5 +1,4 @@
 import pandas as pd
-import cudf
 import dask.dataframe as dd
 from datawizard import DataQualityChecker
 
