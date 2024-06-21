@@ -1,5 +1,5 @@
 import pandas as pd
-from datapilot import DataQualityChecker
+from data_pilot_checker import DataQualityChecker
 
 # Sample data
 data = {
