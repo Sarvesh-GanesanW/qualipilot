@@ -1,1 +1,37 @@
-/data_quality_checker/__pycache__
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+
+# VS Code
+.vscode/
+
+# Logs
+*.log
+
+# Python Virtual Environment
+.env
+.venv
+ENV/
+env.bak/
+venv.bak/
+
+# MacOS
+.DS_Store
+
+# Unit test / coverage reports
+.cache
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# Pytest
+.cache
+
+# MyPy
+.mypy_cache/
