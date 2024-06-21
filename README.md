@@ -9,7 +9,7 @@ DataWhiz is a Python package that automates data quality and integrity checks fo
 You can install the package via pip:
 
 ```bash
-pip install datawhiz
+pip install data_pilot_checker
 ```
 
 ## Installation with GPU Support
