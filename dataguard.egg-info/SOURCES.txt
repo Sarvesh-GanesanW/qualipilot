@@ -1,0 +1,11 @@
+LICENSE
+README.md
+setup.py
+data_quality_checker/__init__.py
+data_quality_checker/checker.py
+dataguard.egg-info/PKG-INFO
+dataguard.egg-info/SOURCES.txt
+dataguard.egg-info/dependency_links.txt
+dataguard.egg-info/requires.txt
+dataguard.egg-info/top_level.txt
+tests/test_checker.py
