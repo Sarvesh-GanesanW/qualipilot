@@ -1,27 +1,26 @@
 import pandas as pd
-from data_pilot_checker import DataQualityChecker
+from datapilot import DataQualityChecker
 
-# Sample data
-data = {
-    'Name': ['Alice', 'Bob', 'Charlie', 'David', 'Edward', 'Frank', 'Grace'],
-    'Age': [25, 32, 37, 29, 41, None, 30],
-    'Salary': [50000, 54000, 58000, 62000, 66000, 70000, 74000],
-    'Department': ['HR', 'Finance', 'IT', 'HR', 'IT', 'Finance', 'HR']
+# Load the sales data
+file_path = 'bitcoin.csv'
+df = pd.read_csv(file_path)
+
+print(df.shape)
+
+# Initialize the checker with custom parameters
+checker = DataQualityChecker(df, npartitions=2, threshold=1.5, llm_api_key='ollama')
+
+# Define column ranges based on the data description
+column_ranges = {
+    'Open': (4.39, 39301.0),  
+    'Close': (4.4, 50638.48)  
 }
-df = pd.DataFrame(data)
-
-# Initialize the checker
-checker = DataQualityChecker(df)
 
 # Run all checks
-column_ranges = {
-    'Age': (18, 65),
-    'Salary': (30000, 80000)
-}
-check_results = checker.run_all_checks(column_ranges)
+print("\nRunning all checks...")
+results = checker.run_all_checks(column_ranges=column_ranges, llm_model='qwen2:7b')
+results_file_path = 'results.json'
+print(f"\nSaving results to {results_file_path}...")
+checker.save_results(results, results_file_path)
 
-# Display results
-for check, result in check_results.items():
-    print(f"--- {check} ---")
-    print(result)
-    print("\n")
+print("\nData quality checks completed and results saved.")

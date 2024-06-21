@@ -1,0 +1,176 @@
+{
+    "Missing Values": {
+        "issue_count": 18,
+        "sample_records": [
+            {
+                "Missing Values": 0,
+                "Percentage": 0.0
+            },
+            {
+                "Missing Values": 0,
+                "Percentage": 0.0
+            },
+            {
+                "Missing Values": 0,
+                "Percentage": 0.0
+            },
+            {
+                "Missing Values": 0,
+                "Percentage": 0.0
+            },
+            {
+                "Missing Values": 0,
+                "Percentage": 0.0
+            }
+        ]
+    },
+    "Duplicates": {
+        "issue_count": 0,
+        "sample_records": []
+    },
+    "Data Types": {
+        "Row ID": "int64",
+        "Order ID": "object",
+        "Order Date": "object",
+        "Ship Date": "object",
+        "Ship Mode": "object",
+        "Customer ID": "object",
+        "Customer Name": "object",
+        "Segment": "object",
+        "Country": "object",
+        "City": "object",
+        "State": "object",
+        "Postal Code": "float64",
+        "Region": "object",
+        "Product ID": "object",
+        "Category": "object",
+        "Sub-Category": "object",
+        "Product Name": "object",
+        "Sales": "float64"
+    },
+    "Outliers": {
+        "Row ID": {
+            "issue_count": 0,
+            "sample_records": []
+        },
+        "Postal Code": {
+            "issue_count": 0,
+            "sample_records": []
+        },
+        "Sales": {
+            "issue_count": 1145,
+            "sample_records": [
+                {
+                    "Row ID": 2,
+                    "Order ID": "CA-2017-152156",
+                    "Order Date": "08/11/2017",
+                    "Ship Date": "11/11/2017",
+                    "Ship Mode": "Second Class",
+                    "Customer ID": "CG-12520",
+                    "Customer Name": "Claire Gute",
+                    "Segment": "Consumer",
+                    "Country": "United States",
+                    "City": "Henderson",
+                    "State": "Kentucky",
+                    "Postal Code": 42420.0,
+                    "Region": "South",
+                    "Product ID": "FUR-CH-10000454",
+                    "Category": "Furniture",
+                    "Sub-Category": "Chairs",
+                    "Product Name": "Hon Deluxe Fabric Upholstered Stacking Chairs, Rounded Back",
+                    "Sales": 731.94
+                },
+                {
+                    "Row ID": 4,
+                    "Order ID": "US-2016-108966",
+                    "Order Date": "11/10/2016",
+                    "Ship Date": "18/10/2016",
+                    "Ship Mode": "Standard Class",
+                    "Customer ID": "SO-20335",
+                    "Customer Name": "Sean O'Donnell",
+                    "Segment": "Consumer",
+                    "Country": "United States",
+                    "City": "Fort Lauderdale",
+                    "State": "Florida",
+                    "Postal Code": 33311.0,
+                    "Region": "South",
+                    "Product ID": "FUR-TA-10000577",
+                    "Category": "Furniture",
+                    "Sub-Category": "Tables",
+                    "Product Name": "Bretford CR4500 Series Slim Rectangular Table",
+                    "Sales": 957.5775
+                },
+                {
+                    "Row ID": 8,
+                    "Order ID": "CA-2015-115812",
+                    "Order Date": "09/06/2015",
+                    "Ship Date": "14/06/2015",
+                    "Ship Mode": "Standard Class",
+                    "Customer ID": "BH-11710",
+                    "Customer Name": "Brosina Hoffman",
+                    "Segment": "Consumer",
+                    "Country": "United States",
+                    "City": "Los Angeles",
+                    "State": "California",
+                    "Postal Code": 90032.0,
+                    "Region": "West",
+                    "Product ID": "TEC-PH-10002275",
+                    "Category": "Technology",
+                    "Sub-Category": "Phones",
+                    "Product Name": "Mitel 5320 IP Phone VoIP phone",
+                    "Sales": 907.152
+                },
+                {
+                    "Row ID": 11,
+                    "Order ID": "CA-2015-115812",
+                    "Order Date": "09/06/2015",
+                    "Ship Date": "14/06/2015",
+                    "Ship Mode": "Standard Class",
+                    "Customer ID": "BH-11710",
+                    "Customer Name": "Brosina Hoffman",
+                    "Segment": "Consumer",
+                    "Country": "United States",
+                    "City": "Los Angeles",
+                    "State": "California",
+                    "Postal Code": 90032.0,
+                    "Region": "West",
+                    "Product ID": "FUR-TA-10001539",
+                    "Category": "Furniture",
+                    "Sub-Category": "Tables",
+                    "Product Name": "Chromcraft Rectangular Conference Tables",
+                    "Sales": 1706.184
+                },
+                {
+                    "Row ID": 12,
+                    "Order ID": "CA-2015-115812",
+                    "Order Date": "09/06/2015",
+                    "Ship Date": "14/06/2015",
+                    "Ship Mode": "Standard Class",
+                    "Customer ID": "BH-11710",
+                    "Customer Name": "Brosina Hoffman",
+                    "Segment": "Consumer",
+                    "Country": "United States",
+                    "City": "Los Angeles",
+                    "State": "California",
+                    "Postal Code": 90032.0,
+                    "Region": "West",
+                    "Product ID": "TEC-PH-10002033",
+                    "Category": "Technology",
+                    "Sub-Category": "Phones",
+                    "Product Name": "Konftel 250 Conference\u00a0phone\u00a0- Charcoal black",
+                    "Sales": 911.424
+                }
+            ]
+        }
+    },
+    "Range Validation": {
+        "Postal Code": {
+            "issue_count": 0,
+            "sample_records": []
+        },
+        "Sales": {
+            "issue_count": 0,
+            "sample_records": []
+        }
+    }
+}
