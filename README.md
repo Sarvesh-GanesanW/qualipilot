@@ -8,7 +8,7 @@ You can install the package via pip:
 
 ```bash
 pip install data_quality_checker
-
+```
 ## GPU Acceleration
 
 For GPU acceleration with cuDF, please ensure your system meets the requirements listed in the cuDF installation guide (https://docs.rapids.ai/install).
