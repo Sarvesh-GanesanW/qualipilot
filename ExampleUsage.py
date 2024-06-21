@@ -1,6 +1,7 @@
 import pandas as pd
-from data_quality_checker import DataQualityChecker
+from datawhiz import DataQualityChecker
 
+# Sample data
 data = {
     'Name': ['Alice', 'Bob', 'Charlie', 'David', 'Edward', 'Frank', 'Grace'],
     'Age': [25, 32, 37, 29, 41, None, 30],
@@ -9,14 +10,17 @@ data = {
 }
 df = pd.DataFrame(data)
 
+# Initialize the checker
 checker = DataQualityChecker(df)
 
+# Run all checks
 column_ranges = {
     'Age': (18, 65),
     'Salary': (30000, 80000)
 }
 check_results = checker.run_all_checks(column_ranges)
 
+# Display results
 for check, result in check_results.items():
     print(f"--- {check} ---")
     print(result)

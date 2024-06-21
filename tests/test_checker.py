@@ -1,7 +1,7 @@
 import pandas as pd
 import cudf
 import dask.dataframe as dd
-from data_quality_checker import DataQualityChecker
+from datawhiz import DataQualityChecker
 
 def test_missing_values():
     data = {
