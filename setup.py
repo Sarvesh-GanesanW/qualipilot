@@ -6,6 +6,7 @@ setup(
     packages=find_packages(),
     install_requires=[
         'pandas',
+        'dask',
         'dask[dataframe]',
     ],
     author='Sarvesh Ganesan',
