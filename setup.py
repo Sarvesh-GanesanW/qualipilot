@@ -1,7 +1,7 @@
 from setuptools import setup, find_packages
 
 setup(
-    name='datawizard',  
+    name='datapilot',  
     version='1',  
     packages=find_packages(),
     install_requires=[
@@ -13,7 +13,7 @@ setup(
     description='A package for automating data quality and integrity checks with optional GPU acceleration using cuDF',
     long_description=open('README.md').read(),
     long_description_content_type='text/markdown',
-    url='https://github.com/Sarvesh-GanesanW/datawizard',
+    url='https://github.com/Sarvesh-GanesanW/datapilot',
     classifiers=[
         'Programming Language :: Python :: 3',
         'License :: OSI Approved :: MIT License',

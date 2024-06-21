@@ -1,6 +1,6 @@
 import pandas as pd
 import dask.dataframe as dd
-from datawizard import DataQualityChecker
+from datapilot import DataQualityChecker
 
 def test_missing_values():
     data = {
