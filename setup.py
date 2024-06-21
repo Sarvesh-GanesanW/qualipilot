@@ -1,7 +1,7 @@
 from setuptools import setup, find_packages
 
 setup(
-    name='datapilot',  
+    name='data_pilot_checker',  
     version='1',  
     packages=find_packages(),
     install_requires=[
