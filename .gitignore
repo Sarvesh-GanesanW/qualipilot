@@ -3,6 +3,7 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+/setup.py
 # Distribution / packaging
 build/
 dist/
