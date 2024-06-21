@@ -1,4 +1,4 @@
-# DataWhiz
+# DataPilotChecker
 
 DataWhiz is a Python package that automates data quality and integrity checks for your dataset. It performs several checks including missing values, duplicate rows, outliers, data type validation, and range validation. The package uses cuDF for GPU acceleration if a compatible GPU is available, and falls back to Dask for parallel processing otherwise.
 
@@ -29,7 +29,7 @@ conda activate rapids-24.06
 ### Install DataWhiz in the conda environment:
 
 ```bash
-pip install datawhiz
+pip install data_pilot_checker
 ```
 
 Check the rapids website for cuDF installation. (https://docs.rapids.ai/install)
