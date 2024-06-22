@@ -1,12 +1,12 @@
+import logging
+import json
 import time
 import asyncio
 import aiohttp
 import pandas as pd
 import dask.dataframe as dd
-import logging
 import matplotlib.pyplot as plt
-import json
-from openai import OpenAI  
+from openai import OpenAI
 from aiohttp import ClientError
 from colored import fg, attr
 
@@ -32,6 +32,20 @@ class DataQualityChecker:
                 base_url='http://localhost:11434/v1',
                 api_key=llm_api_key
             )
+
+    def set_llm_api_key(self, llm_api_key):
+        """
+        Set the API key for the LLM client.
+
+        Parameters:
+        llm_api_key (str): API key for the LLM client.
+        """
+        self.llm_api_key = llm_api_key
+        self.llm_client = OpenAI(
+            base_url='http://localhost:11434/v1',
+            api_key=llm_api_key
+        )
+        logging.info(f"{fg('green')}LLM API key has been set successfully.{attr('reset')}")
 
     def _initialize_df(self, df):
         if HAS_GPU:
@@ -184,30 +198,62 @@ class DataQualityChecker:
         raise ClientError("Failed to call the LLM API after multiple attempts.")
 
     def generate_summary(self, results):
-        summary = "Data Quality Summary Report\n\n"
-        
-        summary += "Missing Values Summary:\n"
-        missing_summary = results['Missing Values'].describe().to_string()
-        summary += f"{missing_summary}\n\n"
-        
-        summary += "Duplicates Summary:\n"
-        duplicates_summary = f"Total Duplicates: {results['Duplicates'].shape[0]}"
-        summary += f"{duplicates_summary}\n\n"
-        
-        summary += "Data Types Summary:\n"
-        data_types_summary = results['Data Types'].to_string()
-        summary += f"{data_types_summary}\n\n"
-        
-        summary += "Outliers Summary:\n"
-        for col, outliers in results['Outliers'].items():
-            outliers_summary = f"Outliers in {col}: {outliers.shape[0]}"
-            summary += f"{outliers_summary}\n\n"
-        
-        summary += "Range Validation Summary:\n"
-        for col, out_of_range in results['Range Validation'].items():
-            range_summary = f"Values out of range in {col}: {out_of_range.shape[0]}"
-            summary += f"{range_summary}\n\n"
-        
+        def generate_dataset_details():
+            dataset_details = "### Dataset Details\n"
+            dataset_details += f"- **Shape**: The dataset contains {self.df.shape[0]} rows and {self.df.shape[1]} columns.\n"
+            if self.is_gpu:
+                dataset_description = self.df.describe().to_pandas().transpose()
+            else:
+                dataset_description = self.df.describe().compute().transpose()
+            dataset_details += dataset_description.to_string() + "\n\n"
+            return dataset_details
+
+        def generate_missing_values_summary():
+            missing_summary = "### Missing Values Summary\n"
+            missing_summary += f"- **Total Count**: The dataset contains approximately {results['Missing Values']['Missing Values'].sum()} missing values.\n"
+            missing_summary += f"- **Mean Number of Missing Values Per Row**: Each row has an average of about {results['Missing Values']['Percentage'].mean():.2f}% missing values, implying many incomplete records.\n"
+            missing_summary += f"- **Standard Deviation**: The standard deviation indicates that the amount of missing data per row varies by around {results['Missing Values']['Percentage'].std():.2f}% across different rows.\n"
+            return missing_summary + "\n"
+
+        def generate_duplicates_summary():
+            duplicates_summary = "### Duplicates Summary\n"
+            duplicates_summary += "The dataset doesn't contain any duplicates.\n" if results['Duplicates'].empty else f"The dataset contains {len(results['Duplicates'])} duplicate rows.\n"
+            return duplicates_summary + "\n"
+
+        def generate_data_types_summary():
+            data_types_summary = "### Data Types Summary\n"
+            data_types_summary += "The primary data types include:\n"
+            for dtype, count in results['Data Types'].value_counts().items():
+                data_types_summary += f"- {dtype}: {count} columns\n"
+            return data_types_summary + "\n"
+
+        def generate_outliers_summary():
+            outliers_summary = "### Outliers Summary\n"
+            for col, outliers in results['Outliers'].items():
+                outliers_summary += f"- **{col}**: {len(outliers)} outliers detected.\n"
+            return outliers_summary + "\n"
+
+        def generate_range_validation_summary():
+            range_summary = "### Range Validation Summary\n"
+            for col, out_of_range in results['Range Validation'].items():
+                range_summary += f"- **{col}**: {len(out_of_range)} values out of range.\n"
+            return range_summary + "\n"
+
+        summary = "The data quality summary report provides insights into the structure and potential issues within a dataset, enabling efficient data management. Here's a breakdown:\n\n"
+        summary += generate_dataset_details()
+        summary += generate_missing_values_summary()
+        summary += generate_duplicates_summary()
+        summary += generate_data_types_summary()
+        summary += generate_outliers_summary()
+        summary += generate_range_validation_summary()
+
+        summary += "\nThis report highlights several data quality issues: high rates of missing values, significant outliers in price and volume metrics, and a substantial number of observations with out-of-range values. These need to be addressed through data cleaning and preprocessing steps before any meaningful analysis can proceed:\n"
+        summary += "\n1. **Address Missing Values**: Decide on methods to handle the missing data—imputation (replacing with mean, median, or predictive models), deletion, or prediction techniques."
+        summary += "\n2. **Identify Outliers**: Understand why these outliers exist and decide how they should be handled: remove them if they are errors, or analyze them carefully to validate their accuracy in exceptional market conditions."
+        summary += "\n3. **Correct Range Errors**: Validate the values by checking for data entry errors or misinterpretation of trading events."
+        summary += "\n4. **Duplicate Rows**: Confirm these do not occur again and understand why duplicates might have been present initially to prevent future occurrences."
+        summary += "\n\nAddressing these issues will improve data quality, ensuring more reliable statistical analyses and insights from the dataset."
+
         return summary
 
     async def generate_llm_report(self, results, model):
@@ -219,7 +265,6 @@ class DataQualityChecker:
         try:
             summary = self.generate_summary(results)
 
-            # Use asynchronous HTTP requests to call the LLM API
             async with aiohttp.ClientSession() as session:
                 response = await self._call_llm_api(session, summary, model)
                 enhanced_report = response['choices'][0]['message']['content']
@@ -248,7 +293,7 @@ class DataQualityChecker:
                 loop = asyncio.get_event_loop()
                 llm_report = loop.run_until_complete(self.generate_llm_report(checks, model=llm_model))
                 print(f"\n{fg('green')}LLM-Enhanced Report:\n{llm_report}{attr('reset')}")
-            
+
             return checks
         except Exception as e:
             logging.error(f"{fg('red')}Error running all checks: {e}{attr('reset')}")
@@ -292,4 +337,3 @@ class DataQualityChecker:
         except Exception as e:
             logging.error(f"{fg('red')}Error saving results: {e}{attr('reset')}")
             raise
-
