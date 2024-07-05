@@ -1,6 +1,6 @@
-# DataPilotChecker
+# Data Quality Checker
 
-Datapilot is a Python package that automates data quality and integrity checks for your dataset. It performs several checks including missing values, duplicate rows, outliers, data type validation, and range validation. The package uses cuDF for GPU acceleration if a compatible GPU is available, and falls back to Dask for parallel processing otherwise.
+Data Quality Checker is a Python package that automates data quality and integrity checks for your dataset. It performs several checks including missing values, duplicate rows, outliers, data type validation, and range validation. The package uses cuDF for GPU acceleration if a compatible GPU is available, and falls back to Dask for parallel processing otherwise.
 
 ## Installation
 
