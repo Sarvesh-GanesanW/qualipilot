@@ -18,7 +18,7 @@ setup(
     description='A package for automating data quality and integrity checks with optional GPU acceleration using cuDF',
     long_description=open('README.md').read(),
     long_description_content_type='text/markdown',
-    url='https://github.com/Sarvesh-GanesanW/datapilot',
+    url='https://github.com/Sarvesh-GanesanW/dataqualitychecker',
     classifiers=[
         'Programming Language :: Python :: 3',
         'License :: OSI Approved :: MIT License',
