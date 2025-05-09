@@ -26,7 +26,7 @@ conda create -n rapids-24.06 -c rapidsai -c conda-forge -c nvidia \
 ```bash
 conda activate rapids-24.06
 ```
-### Install DataWhiz in the conda environment:
+### Install DataQualityChecker in the conda environment:
 
 ```bash
 pip install data_pilot_checker
