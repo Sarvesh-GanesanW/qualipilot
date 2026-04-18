@@ -1,0 +1,35 @@
+# full datapilot config for the sample dataset.
+# run with:
+#     datapilot check examples/sample.csv --config examples/config.yaml
+
+engine: polars
+report_format: json
+log_level: INFO
+
+checks:
+  missing_values: true
+  duplicates: true
+  data_types: true
+  outliers: true
+  ranges: true
+  cardinality: true
+  freshness: true
+  outlier_iqr_multiplier: 1.5
+  sample_size: 5
+  duplicate_subset: [order_id]
+  column_ranges:
+    amount:
+      min: 0
+      max: 100000
+  freshness_columns: [created_at]
+  freshness_max_age_hours: 24
+
+llm:
+  provider: none
+  # switch to bedrock for production:
+  # provider: bedrock
+  # model: provider.model-3-5-haiku-20241022-v1:0
+  # region: us-east-1
+  # aws_profile: sre-tea
+  temperature: 0.2
+  max_tokens: 1200
