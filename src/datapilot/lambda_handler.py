@@ -70,9 +70,7 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
         "bucket": bucket,
         "input_key": key,
         "output_key": output_key,
-        "summary": {
-            r.name: r.severity for r in report.results
-        },
+        "summary": {r.name: r.severity for r in report.results},
     }
 
 

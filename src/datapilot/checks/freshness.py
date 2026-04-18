@@ -16,9 +16,7 @@ from datapilot.checks.base import Check, CheckContext
 class FreshnessCheck(Check):
     name = "freshness"
 
-    def _execute(
-        self, ctx: CheckContext
-    ) -> tuple[str, dict[str, Any]]:
+    def _execute(self, ctx: CheckContext) -> tuple[str, dict[str, Any]]:
         cols = ctx.config.freshness_columns or ctx.engine.datetime_columns()
         if not cols:
             return "ok", {"per_column": []}
@@ -52,9 +50,7 @@ class FreshnessCheck(Check):
                 {
                     "column": col,
                     "max_timestamp": ts.isoformat(),
-                    "age_hours": round(
-                        age.total_seconds() / 3600, 3
-                    ),
+                    "age_hours": round(age.total_seconds() / 3600, 3),
                     "is_stale": stale,
                 }
             )

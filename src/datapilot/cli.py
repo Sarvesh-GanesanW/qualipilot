@@ -100,8 +100,7 @@ def check(
         typer.Option(
             "--format",
             "-f",
-            help="json | html | markdown (derived from --output if "
-            "omitted).",
+            help="json | html | markdown (derived from --output if omitted).",
         ),
     ] = "json",
     llm_provider: Annotated[
@@ -188,9 +187,7 @@ def _build_config(
     range_spec: list[str] | None,
 ) -> DatapilotConfig:
     """Merge CLI flags on top of a YAML/JSON base config if supplied."""
-    cfg = (
-        DatapilotConfig.from_file(config) if config else DatapilotConfig()
-    )
+    cfg = DatapilotConfig.from_file(config) if config else DatapilotConfig()
 
     # cli flags win over file/env unless flag is still at its default
     if engine != "auto":
@@ -212,9 +209,7 @@ def _build_config(
         ranges = _parse_ranges(range_spec)
         merged = dict(cfg.checks.column_ranges)
         merged.update(ranges)
-        cfg.checks = cfg.checks.model_copy(
-            update={"column_ranges": merged}
-        )
+        cfg.checks = cfg.checks.model_copy(update={"column_ranges": merged})
 
     return cfg
 
@@ -228,9 +223,7 @@ def _parse_ranges(specs: list[str]) -> dict[str, ColumnRange]:
             )
         col, bounds = raw.split("=", 1)
         lo_s, hi_s = bounds.split(",", 1)
-        out[col.strip()] = ColumnRange(
-            min=float(lo_s), max=float(hi_s)
-        )
+        out[col.strip()] = ColumnRange(min=float(lo_s), max=float(hi_s))
     return out
 
 

@@ -53,8 +53,7 @@ def render_html(report: QualityReport) -> str:
     llm_html = ""
     if report.llm_report:
         llm_html = (
-            "<h2>LLM Findings</h2>"
-            f"<pre>{html.escape(report.llm_report)}</pre>"
+            f"<h2>LLM Findings</h2><pre>{html.escape(report.llm_report)}</pre>"
         )
 
     return f"""<!doctype html>

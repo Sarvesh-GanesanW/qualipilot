@@ -34,9 +34,7 @@ def test_missing_check_tolerates_random_shapes(
 ) -> None:
     n = min(len(ints), len(floats))
     df = pd.DataFrame({"a": ints[:n], "b": floats[:n]})
-    ctx = CheckContext(
-        engine=PolarsEngine.from_any(df), config=CheckConfig()
-    )
+    ctx = CheckContext(engine=PolarsEngine.from_any(df), config=CheckConfig())
     result = MissingValuesCheck().run(ctx)
     assert result.error is None
     assert result.severity in {"ok", "warn", "error"}

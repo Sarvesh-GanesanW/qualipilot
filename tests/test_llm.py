@@ -36,9 +36,7 @@ def test_ollama_round_trip_is_mocked() -> None:
 
     fake_response = MagicMock()
     fake_response.raise_for_status.return_value = None
-    fake_response.json.return_value = {
-        "message": {"content": "ok"}
-    }
+    fake_response.json.return_value = {"message": {"content": "ok"}}
 
     with patch("httpx.Client") as client_cls:
         client = client_cls.return_value.__enter__.return_value
@@ -84,9 +82,7 @@ def test_bedrock_provider_happy_path() -> None:
     )
 
     fake_response = {
-        "output": {
-            "message": {"content": [{"text": "done"}]}
-        },
+        "output": {"message": {"content": [{"text": "done"}]}},
         "usage": {
             "inputTokens": 10,
             "outputTokens": 5,

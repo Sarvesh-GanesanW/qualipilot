@@ -40,8 +40,7 @@ class BedrockProvider(LLMProvider):
 
         self._cfg = cfg
         self._model_id = (
-            cfg.model
-            or "provider.model-3-5-haiku-20241022-v1:0"
+            cfg.model or "provider.model-3-5-haiku-20241022-v1:0"
         )
         session_kwargs: dict[str, Any] = {"region_name": cfg.region}
         if cfg.aws_profile:
@@ -54,9 +53,7 @@ class BedrockProvider(LLMProvider):
             read_timeout=cfg.timeout_seconds,
             connect_timeout=10,
         )
-        self._client = session.client(
-            "bedrock-runtime", config=boto_config
-        )
+        self._client = session.client("bedrock-runtime", config=boto_config)
 
     def generate(self, *, system: str, user: str) -> str:
         messages = [

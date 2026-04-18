@@ -45,9 +45,7 @@ class CudfEngine(Engine):
             if suffix in {".parquet", ".pq"}:
                 return cls(cudf.read_parquet(str(path)))
             raise ValueError(f"unsupported file type: {suffix}")
-        raise TypeError(
-            f"cannot build CudfEngine from {type(data).__name__}"
-        )
+        raise TypeError(f"cannot build CudfEngine from {type(data).__name__}")
 
     def row_count(self) -> int:
         return len(self._df)
@@ -62,9 +60,7 @@ class CudfEngine(Engine):
         return list(self._df.select_dtypes(include="number").columns)
 
     def datetime_columns(self) -> list[str]:
-        return list(
-            self._df.select_dtypes(include=["datetime64[ns]"]).columns
-        )
+        return list(self._df.select_dtypes(include=["datetime64[ns]"]).columns)
 
     def null_counts(self) -> dict[str, int]:
         return {
@@ -106,8 +102,7 @@ class CudfEngine(Engine):
             return {}
         desc = self._df[numeric].describe().to_pandas()
         return {
-            c: {str(k): float(v) for k, v in desc[c].items()}
-            for c in numeric
+            c: {str(k): float(v) for k, v in desc[c].items()} for c in numeric
         }
 
     def duplicate_count(self, subset: list[str] | None = None) -> int:
@@ -141,9 +136,7 @@ class CudfEngine(Engine):
     ) -> list[dict[str, Any]]:
         series = self._df[column]
         mask = (series < low) | (series > high)
-        return (
-            self._df[mask].head(n).to_pandas().to_dict(orient="records")
-        )
+        return self._df[mask].head(n).to_pandas().to_dict(orient="records")
 
     def max_datetime(self, column: str) -> Any:
         val = self._df[column].max()

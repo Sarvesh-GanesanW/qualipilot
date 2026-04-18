@@ -54,11 +54,7 @@ class PolarsEngine(Engine):
         return {c: str(dt) for c, dt in self._df.schema.items()}
 
     def numeric_columns(self) -> list[str]:
-        return [
-            c
-            for c, dt in self._df.schema.items()
-            if dt.is_numeric()
-        ]
+        return [c for c, dt in self._df.schema.items() if dt.is_numeric()]
 
     def datetime_columns(self) -> list[str]:
         return [
@@ -184,9 +180,7 @@ class PolarsEngine(Engine):
         n: int,
     ) -> list[dict[str, Any]]:
         return (
-            self._df.filter(
-                (pl.col(column) < low) | (pl.col(column) > high)
-            )
+            self._df.filter((pl.col(column) < low) | (pl.col(column) > high))
             .head(n)
             .to_dicts()
         )

@@ -51,9 +51,7 @@ class Check(ABC):
         )
 
     @abstractmethod
-    def _execute(
-        self, ctx: CheckContext
-    ) -> tuple[str, dict[str, Any]]:
+    def _execute(self, ctx: CheckContext) -> tuple[str, dict[str, Any]]:
         """Run the check logic.
 
         Returns:

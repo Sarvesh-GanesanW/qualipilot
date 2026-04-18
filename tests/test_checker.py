@@ -32,9 +32,7 @@ def test_full_run_produces_all_sections(
     assert report.config_hash is not None
 
 
-def test_save_writes_json(
-    tmp_path: Path, dirty_pandas: pd.DataFrame
-) -> None:
+def test_save_writes_json(tmp_path: Path, dirty_pandas: pd.DataFrame) -> None:
     cfg = DatapilotConfig(output_path=tmp_path / "out.json")
     DataQualityChecker(dirty_pandas, cfg).run()
     assert (tmp_path / "out.json").exists()

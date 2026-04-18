@@ -16,9 +16,7 @@ def render_markdown(report: QualityReport) -> str:
     parts: list[str] = []
     parts.append("# Data Quality Report")
     parts.append("")
-    parts.append(
-        f"- **Generated**: {report.generated_at.isoformat()}"
-    )
+    parts.append(f"- **Generated**: {report.generated_at.isoformat()}")
     parts.append(f"- **Engine**: `{report.dataset.engine}`")
     parts.append(f"- **Rows**: {report.dataset.row_count:,}")
     parts.append(f"- **Columns**: {report.dataset.column_count}")
@@ -41,9 +39,7 @@ def render_markdown(report: QualityReport) -> str:
         parts.append(f"## {r.name}")
         parts.append("")
         parts.append(f"- severity: **{r.severity}**")
-        parts.append(
-            f"- duration: {r.duration_seconds:.3f}s"
-        )
+        parts.append(f"- duration: {r.duration_seconds:.3f}s")
         if r.error:
             parts.append(f"- error: `{r.error}`")
         _append_payload_details(parts, r)
@@ -58,32 +54,24 @@ def render_markdown(report: QualityReport) -> str:
     return "\n".join(parts)
 
 
-def _append_payload_details(
-    parts: list[str], result: CheckResult
-) -> None:
+def _append_payload_details(parts: list[str], result: CheckResult) -> None:
     """Render per-check payload highlights without dumping everything."""
     payload = result.payload
     if not payload:
         return
 
     if "total_null_count" in payload:
-        parts.append(
-            f"- total nulls: {payload['total_null_count']}"
-        )
+        parts.append(f"- total nulls: {payload['total_null_count']}")
         parts.append(
             f"- worst column: {payload.get('worst_column_pct', 0):.2f}%"
         )
     if "total_duplicate_rows" in payload:
-        parts.append(
-            f"- duplicate rows: {payload['total_duplicate_rows']}"
-        )
+        parts.append(f"- duplicate rows: {payload['total_duplicate_rows']}")
     if "rollup" in payload:
         rollup = payload["rollup"]
         parts.append("- dtype rollup:")
         for dtype, count in rollup.items():
             parts.append(f"  - `{dtype}`: {count}")
-    if "per_column" in payload and isinstance(
-        payload["per_column"], list
-    ):
+    if "per_column" in payload and isinstance(payload["per_column"], list):
         total = len(payload["per_column"])
         parts.append(f"- columns evaluated: {total}")

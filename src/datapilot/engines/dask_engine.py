@@ -38,9 +38,7 @@ class DaskEngine(Engine):
             return cls(dd.from_pandas(data, npartitions=npartitions))
         if type(data).__module__.startswith("polars"):
             return cls(
-                dd.from_pandas(
-                    data.to_pandas(), npartitions=npartitions
-                )
+                dd.from_pandas(data.to_pandas(), npartitions=npartitions)
             )
         if isinstance(data, (str, Path)):
             path = Path(data)
@@ -50,9 +48,7 @@ class DaskEngine(Engine):
             if suffix in {".parquet", ".pq"}:
                 return cls(dd.read_parquet(str(path)))
             raise ValueError(f"unsupported file type: {suffix}")
-        raise TypeError(
-            f"cannot build DaskEngine from {type(data).__name__}"
-        )
+        raise TypeError(f"cannot build DaskEngine from {type(data).__name__}")
 
     def row_count(self) -> int:
         return int(self._df.shape[0].compute())
@@ -64,15 +60,11 @@ class DaskEngine(Engine):
         return {c: str(dt) for c, dt in self._df.dtypes.items()}
 
     def numeric_columns(self) -> list[str]:
-        return list(
-            self._df.select_dtypes(include="number").columns
-        )
+        return list(self._df.select_dtypes(include="number").columns)
 
     def datetime_columns(self) -> list[str]:
         return list(
-            self._df.select_dtypes(
-                include=["datetime", "datetimetz"]
-            ).columns
+            self._df.select_dtypes(include=["datetime", "datetimetz"]).columns
         )
 
     def null_counts(self) -> dict[str, int]:
@@ -87,9 +79,7 @@ class DaskEngine(Engine):
         column: str,
         n: int = 10,
     ) -> list[tuple[str, int]]:
-        counts = (
-            self._df[column].value_counts().nlargest(n).compute()
-        )
+        counts = self._df[column].value_counts().nlargest(n).compute()
         return [(str(idx), int(cnt)) for idx, cnt in counts.items()]
 
     def quantiles(
@@ -107,7 +97,7 @@ class DaskEngine(Engine):
         }
         # single compute call collapses the task graph for all pairs
         computed = dd.compute(*futures.values())
-        for (key, val) in zip(futures.keys(), computed, strict=True):
+        for key, val in zip(futures.keys(), computed, strict=True):
             col, q = key
             out[col][float(q)] = (
                 float(val) if val is not None else float("nan")
@@ -120,8 +110,7 @@ class DaskEngine(Engine):
             return {}
         desc = self._df[numeric].describe().compute()
         return {
-            c: {str(k): float(v) for k, v in desc[c].items()}
-            for c in numeric
+            c: {str(k): float(v) for k, v in desc[c].items()} for c in numeric
         }
 
     def duplicate_count(self, subset: list[str] | None = None) -> int:
@@ -136,9 +125,7 @@ class DaskEngine(Engine):
     ) -> list[dict[str, Any]]:
         base = self._df if subset is None else self._df[subset]
         mask = base.duplicated(keep=False)
-        return (
-            self._df[mask].head(n, compute=True).to_dict(orient="records")
-        )
+        return self._df[mask].head(n, compute=True).to_dict(orient="records")
 
     def count_outside(
         self,
@@ -158,9 +145,7 @@ class DaskEngine(Engine):
     ) -> list[dict[str, Any]]:
         series = self._df[column]
         mask = (series < low) | (series > high)
-        return (
-            self._df[mask].head(n, compute=True).to_dict(orient="records")
-        )
+        return self._df[mask].head(n, compute=True).to_dict(orient="records")
 
     def max_datetime(self, column: str) -> Any:
         val = self._df[column].max().compute()

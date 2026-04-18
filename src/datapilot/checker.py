@@ -52,9 +52,7 @@ class DataQualityChecker:
         config: DatapilotConfig | None = None,
     ) -> None:
         self.config = config or DatapilotConfig()
-        self.engine: Engine = build_engine(
-            data, kind=self.config.engine
-        )
+        self.engine: Engine = build_engine(data, kind=self.config.engine)
         logger.info(
             "initialised checker with %s engine over %d rows",
             self.engine.name,
@@ -63,9 +61,7 @@ class DataQualityChecker:
 
     def run(self) -> QualityReport:
         """Run every enabled check and return the aggregate report."""
-        ctx = CheckContext(
-            engine=self.engine, config=self.config.checks
-        )
+        ctx = CheckContext(engine=self.engine, config=self.config.checks)
         results: list[CheckResult] = []
         for check in self._build_check_list():
             logger.info("running check: %s", check.name)
@@ -122,9 +118,7 @@ class DataQualityChecker:
             checks.append(FreshnessCheck())
         return checks
 
-    def _maybe_render_llm_report(
-        self, report: QualityReport
-    ) -> str | None:
+    def _maybe_render_llm_report(self, report: QualityReport) -> str | None:
         provider_name = self.config.llm.provider
         if provider_name == "none":
             return None

@@ -15,9 +15,7 @@ from datapilot.checks.base import Check, CheckContext
 class CardinalityCheck(Check):
     name = "cardinality"
 
-    def _execute(
-        self, ctx: CheckContext
-    ) -> tuple[str, dict[str, Any]]:
+    def _execute(self, ctx: CheckContext) -> tuple[str, dict[str, Any]]:
         total_rows = ctx.engine.row_count() or 1
         report: list[dict[str, Any]] = []
         any_constant = False
@@ -35,9 +33,7 @@ class CardinalityCheck(Check):
                 {
                     "column": col,
                     "distinct_count": distinct,
-                    "unique_ratio": round(
-                        distinct / total_rows, 6
-                    ),
+                    "unique_ratio": round(distinct / total_rows, 6),
                     "top_values": top,
                 }
             )

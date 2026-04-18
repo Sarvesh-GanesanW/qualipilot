@@ -82,9 +82,7 @@ class CheckResult(BaseModel):
 class QualityReport(BaseModel):
     """Aggregate result of a full ``DataQualityChecker.run()`` call."""
 
-    generated_at: datetime = Field(
-        default_factory=lambda: datetime.now(UTC)
-    )
+    generated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     dataset: DatasetStats
     results: list[CheckResult]
     llm_report: str | None = None

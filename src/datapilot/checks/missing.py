@@ -15,18 +15,14 @@ from datapilot.checks.base import Check, CheckContext
 class MissingValuesCheck(Check):
     name = "missing_values"
 
-    def _execute(
-        self, ctx: CheckContext
-    ) -> tuple[str, dict[str, Any]]:
+    def _execute(self, ctx: CheckContext) -> tuple[str, dict[str, Any]]:
         nulls = ctx.engine.null_counts()
         total_rows = ctx.engine.row_count() or 1
         stats = [
             {
                 "column": col,
                 "null_count": int(count),
-                "null_percentage": round(
-                    (count / total_rows) * 100, 4
-                ),
+                "null_percentage": round((count / total_rows) * 100, 4),
             }
             for col, count in nulls.items()
         ]

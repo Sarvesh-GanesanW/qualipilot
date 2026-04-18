@@ -16,9 +16,7 @@ from datapilot.checks.base import Check, CheckContext
 class OutliersCheck(Check):
     name = "outliers"
 
-    def _execute(
-        self, ctx: CheckContext
-    ) -> tuple[str, dict[str, Any]]:
+    def _execute(self, ctx: CheckContext) -> tuple[str, dict[str, Any]]:
         numeric = ctx.engine.numeric_columns()
         if not numeric:
             return "ok", {"per_column": []}

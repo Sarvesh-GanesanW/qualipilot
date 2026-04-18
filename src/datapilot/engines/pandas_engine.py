@@ -45,21 +45,15 @@ class PandasEngine(Engine):
         return {c: str(dt) for c, dt in self._df.dtypes.items()}
 
     def numeric_columns(self) -> list[str]:
-        return list(
-            self._df.select_dtypes(include="number").columns
-        )
+        return list(self._df.select_dtypes(include="number").columns)
 
     def datetime_columns(self) -> list[str]:
         return list(
-            self._df.select_dtypes(
-                include=["datetime", "datetimetz"]
-            ).columns
+            self._df.select_dtypes(include=["datetime", "datetimetz"]).columns
         )
 
     def null_counts(self) -> dict[str, int]:
-        return {
-            c: int(v) for c, v in self._df.isna().sum().items()
-        }
+        return {c: int(v) for c, v in self._df.isna().sum().items()}
 
     def distinct_count(self, column: str) -> int:
         return int(self._df[column].nunique(dropna=True))
@@ -83,8 +77,7 @@ class PandasEngine(Engine):
         # by q, which is exactly what we need
         q_df = self._df[columns].quantile(list(qs))
         return {
-            c: {float(q): float(q_df.at[q, c]) for q in qs}
-            for c in columns
+            c: {float(q): float(q_df.at[q, c]) for q in qs} for c in columns
         }
 
     def describe(self) -> dict[str, dict[str, float]]:
@@ -93,8 +86,7 @@ class PandasEngine(Engine):
             return {}
         desc = self._df[numeric].describe()
         return {
-            c: {str(k): float(v) for k, v in desc[c].items()}
-            for c in numeric
+            c: {str(k): float(v) for k, v in desc[c].items()} for c in numeric
         }
 
     def duplicate_count(self, subset: list[str] | None = None) -> int:

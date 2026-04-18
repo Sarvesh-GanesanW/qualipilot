@@ -14,9 +14,7 @@ from datapilot.checks.base import Check, CheckContext
 class RangesCheck(Check):
     name = "ranges"
 
-    def _execute(
-        self, ctx: CheckContext
-    ) -> tuple[str, dict[str, Any]]:
+    def _execute(self, ctx: CheckContext) -> tuple[str, dict[str, Any]]:
         ranges = ctx.config.column_ranges
         if not ranges:
             return "ok", {"per_column": []}

@@ -14,9 +14,7 @@ from datapilot.checks.base import Check, CheckContext
 class DuplicatesCheck(Check):
     name = "duplicates"
 
-    def _execute(
-        self, ctx: CheckContext
-    ) -> tuple[str, dict[str, Any]]:
+    def _execute(self, ctx: CheckContext) -> tuple[str, dict[str, Any]]:
         subset = ctx.config.duplicate_subset
         total = ctx.engine.duplicate_count(subset=subset)
         sample = ctx.engine.sample_duplicates(

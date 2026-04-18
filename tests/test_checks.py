@@ -73,9 +73,7 @@ def test_outliers_flagged(dirty_pandas: pd.DataFrame) -> None:
 def test_ranges_errors_on_violation(
     dirty_pandas: pd.DataFrame,
 ) -> None:
-    cfg = CheckConfig(
-        column_ranges={"amount": ColumnRange(min=0, max=100)}
-    )
+    cfg = CheckConfig(column_ranges={"amount": ColumnRange(min=0, max=100)})
     result = RangesCheck().run(_ctx(dirty_pandas, cfg))
     assert result.severity == "error"
     amount = result.payload["per_column"][0]
@@ -93,9 +91,7 @@ def test_cardinality_detects_constant_column() -> None:
     df = pd.DataFrame({"a": [1] * 10, "b": range(10)})
     result = CardinalityCheck().run(_ctx(df))
     assert result.severity == "warn"
-    const = next(
-        c for c in result.payload["per_column"] if c["column"] == "a"
-    )
+    const = next(c for c in result.payload["per_column"] if c["column"] == "a")
     assert const["distinct_count"] == 1
 
 
@@ -113,9 +109,7 @@ def test_freshness_flags_old_data(
 
 def test_freshness_ok_for_fresh_data() -> None:
     now = datetime.now(UTC)
-    df = pd.DataFrame(
-        {"event_ts": [now, now - timedelta(minutes=10)]}
-    )
+    df = pd.DataFrame({"event_ts": [now, now - timedelta(minutes=10)]})
     cfg = CheckConfig(
         freshness=True,
         freshness_columns=["event_ts"],
