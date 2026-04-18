@@ -192,8 +192,7 @@ class PolarsEngine(Engine):
         )
 
     def max_datetime(self, column: str) -> Any:
-        val = self._df.select(pl.col(column).max()).item()
-        return val
+        return self._df.select(pl.col(column).max()).item()
 
 
 def _read_path(path: Path) -> pl.DataFrame:

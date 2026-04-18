@@ -7,6 +7,7 @@ engine's batched ``quantiles`` API, then counts/samples values outside
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 from datapilot.checks.base import Check, CheckContext
@@ -61,5 +62,8 @@ class OutliersCheck(Check):
 
 
 def _is_nan(value: float) -> bool:
-    # cheap NaN check that does not pull in numpy
-    return value != value
+    # protects against None-like sentinels alongside real nan floats
+    try:
+        return math.isnan(value)
+    except TypeError:
+        return False

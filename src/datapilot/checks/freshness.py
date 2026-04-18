@@ -7,7 +7,7 @@ jobs that should never publish stale snapshots.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from datapilot.checks.base import Check, CheckContext
@@ -24,7 +24,7 @@ class FreshnessCheck(Check):
             return "ok", {"per_column": []}
 
         max_age = timedelta(hours=ctx.config.freshness_max_age_hours)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         report: list[dict[str, Any]] = []
         any_stale = False
 
@@ -77,5 +77,5 @@ def _as_aware(value: Any) -> datetime:
         dt = datetime.fromisoformat(str(value))
 
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
+        dt = dt.replace(tzinfo=UTC)
     return dt

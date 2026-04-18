@@ -39,7 +39,10 @@ class BedrockProvider(LLMProvider):
             ) from exc
 
         self._cfg = cfg
-        self._model_id = cfg.model or "provider.model-3-5-haiku-20241022-v1:0"
+        self._model_id = (
+            cfg.model
+            or "provider.model-3-5-haiku-20241022-v1:0"
+        )
         session_kwargs: dict[str, Any] = {"region_name": cfg.region}
         if cfg.aws_profile:
             session_kwargs["profile_name"] = cfg.aws_profile

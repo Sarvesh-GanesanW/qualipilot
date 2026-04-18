@@ -50,7 +50,7 @@ class CudfEngine(Engine):
         )
 
     def row_count(self) -> int:
-        return int(len(self._df))
+        return len(self._df)
 
     def columns(self) -> list[str]:
         return list(self._df.columns)
