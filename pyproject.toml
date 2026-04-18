@@ -1,0 +1,170 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "data-pilot-checker"
+version = "2.0.0"
+description = "Production-grade data quality checks with pluggable LLM reporting (AWS Bedrock, Ollama, OpenAI-compatible)."
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.11"
+authors = [
+    { name = "Sarvesh Ganesan", email = "sarveshganesan99@gmail.com" },
+]
+keywords = [
+    "data-quality",
+    "data-validation",
+    "bedrock",
+    "ollama",
+    "polars",
+    "pandas",
+    "dask",
+]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Software Development :: Quality Assurance",
+    "Typing :: Typed",
+]
+dependencies = [
+    "polars>=1.12",
+    "pandas>=2.2",
+    "pyarrow>=17.0",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.5",
+    "typer>=0.12",
+    "rich>=13.8",
+    "tenacity>=9.0",
+    "pyyaml>=6.0",
+    "httpx>=0.27",
+]
+
+[project.optional-dependencies]
+bedrock = ["boto3>=1.35", "botocore>=1.35"]
+dask = ["dask[dataframe]>=2024.8"]
+ollama = []
+openai = ["openai>=1.50"]
+viz = ["matplotlib>=3.9"]
+dev = [
+    "ruff>=0.6",
+    "mypy>=1.11",
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "pytest-cov>=5.0",
+    "hypothesis>=6.112",
+    "moto>=5.0",
+    "pre-commit>=3.8",
+    "types-PyYAML",
+]
+all = [
+    "boto3>=1.35",
+    "botocore>=1.35",
+    "dask[dataframe]>=2024.8",
+    "openai>=1.50",
+    "matplotlib>=3.9",
+]
+
+[project.urls]
+Homepage = "https://github.com/Sarvesh-GanesanW/dataqualitychecker"
+Repository = "https://github.com/Sarvesh-GanesanW/dataqualitychecker"
+Issues = "https://github.com/Sarvesh-GanesanW/dataqualitychecker/issues"
+
+[project.scripts]
+datapilot = "datapilot.cli:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/datapilot"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "src/datapilot",
+    "README.md",
+    "LICENSE",
+    "pyproject.toml",
+]
+
+[tool.ruff]
+line-length = 79
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E",
+    "W",
+    "F",
+    "I",
+    "B",
+    "UP",
+    "N",
+    "SIM",
+    "PL",
+    "RUF",
+    "ASYNC",
+    "PT",
+    "RET",
+    "TID",
+]
+ignore = [
+    "PLR0913",
+    "PLR2004",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["PLR2004", "S101"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_unused_ignores = true
+disallow_any_unimported = false
+ignore_missing_imports = true
+files = ["src/datapilot"]
+
+[[tool.mypy.overrides]]
+module = ["tests.*"]
+disallow_untyped_defs = false
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+addopts = [
+    "-ra",
+    "--strict-markers",
+    "--strict-config",
+    "--cov=datapilot",
+    "--cov-report=term-missing",
+    "--cov-report=xml",
+]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+markers = [
+    "integration: hits external services (skipped by default)",
+    "slow: slow tests",
+]
+
+[tool.coverage.run]
+branch = true
+source = ["datapilot"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if TYPE_CHECKING:",
+    "if __name__ == .__main__.:",
+]

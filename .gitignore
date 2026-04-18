@@ -1,38 +1,68 @@
-# Byte-compiled / optimized / DLL files
+# bytecode
 __pycache__/
 *.py[cod]
 *$py.class
+*.so
 
-/setup.py
-# Distribution / packaging
+# build/dist
 build/
 dist/
 *.egg-info/
+.eggs/
+pip-wheel-metadata/
 
-# VS Code
-.vscode/
-
-# Logs
-*.log
-
-# Python Virtual Environment
+# venv
 .env
-.venv
+.venv/
+venv/
 ENV/
-env.bak/
-venv.bak/
 
-# MacOS
+# editors
+.vscode/
+.idea/
+*.swp
+
+# os
 .DS_Store
+Thumbs.db
 
-# Unit test / coverage reports
-.cache
+# tests / coverage
+.cache/
+.pytest_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.tox/
+.hypothesis/
 
-# Jupyter Notebook
+# type checkers
+.mypy_cache/
+.ruff_cache/
+.pyre/
+
+# notebooks
 .ipynb_checkpoints
 
-# Pytest
-.cache
+# local artefacts
+results.json
+data_quality_results.json
+*.log
+reports/
+.local/
 
-# MyPy
-.mypy_cache/
+# secrets
+.env.*
+!.env.example
+*.pem
+*.key
+
+# terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!example.tfvars
+
+# docker
+.docker/
