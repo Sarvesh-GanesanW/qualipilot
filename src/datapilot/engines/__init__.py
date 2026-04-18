@@ -51,6 +51,10 @@ def build_engine(
         return PolarsEngine.from_any(data)
     if resolved == "pandas":
         return PandasEngine.from_any(data)
+    if resolved == "duckdb":
+        from datapilot.engines.duckdb_engine import DuckDBEngine
+
+        return DuckDBEngine.from_any(data)
     if resolved == "dask":
         from datapilot.engines.dask_engine import DaskEngine
 
@@ -59,6 +63,10 @@ def build_engine(
         from datapilot.engines.cudf_engine import CudfEngine
 
         return CudfEngine.from_any(data)
+    if resolved == "spark":
+        from datapilot.engines.spark_engine import SparkEngine
+
+        return SparkEngine.from_any(data)
 
     raise ValueError(f"unknown engine kind: {kind!r}")
 
@@ -76,6 +84,10 @@ def _resolve_kind(data: Any, kind: str) -> str:
         return "cudf"
     if module.startswith("dask"):
         return "dask"
+    if module.startswith("duckdb"):
+        return "duckdb"
+    if module.startswith("pyspark"):
+        return "spark"
     if module.startswith("pandas"):
         # default upgrade path, polars is faster for single-node
         return "polars"

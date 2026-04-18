@@ -92,6 +92,14 @@ class RecordLinker:
 
     def run(self) -> LinkageResult:
         """Block, compare, learn, score, and cluster in one call."""
+        if self.config.backend == "duckdb":
+            # deferred import so duckdb stays an optional extra
+            from datapilot.linking.duckdb_linker import (
+                run_duckdb_linker,
+            )
+
+            return run_duckdb_linker(self._df, self.config)
+
         timings: dict[str, float] = {}
 
         t0 = time.perf_counter()
@@ -113,6 +121,12 @@ class RecordLinker:
                 timings_ms=timings,
             )
 
+        if pairs.height > self.config.max_pairs_hard_cap:
+            raise MemoryError(
+                f"blocking produced {pairs.height:,} pairs; "
+                f"hard cap is {self.config.max_pairs_hard_cap:,}. "
+                f"Tighten blocking_rules or raise max_pairs_hard_cap."
+            )
         if pairs.height > self.config.max_pairs_warning:
             logger.warning(
                 "blocking produced %d pairs; consider tighter rules",

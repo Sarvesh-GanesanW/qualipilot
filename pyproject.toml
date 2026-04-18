@@ -54,6 +54,9 @@ ollama = []
 openai = ["openai>=1.50"]
 viz = ["matplotlib>=3.9"]
 linking = ["rapidfuzz>=3.9", "numpy>=2.0"]
+duckdb = ["duckdb>=1.5"]
+spark = ["pyspark>=3.5"]
+iceberg = ["pyiceberg>=0.9", "pyarrow>=17"]
 dev = [
     "ruff>=0.6",
     "mypy>=1.11",
@@ -73,6 +76,8 @@ all = [
     "matplotlib>=3.9",
     "rapidfuzz>=3.9",
     "numpy>=2.0",
+    "duckdb>=1.5",
+    "pyiceberg>=0.9",
 ]
 
 [project.urls]
@@ -120,6 +125,8 @@ ignore = [
     "PLR0913",
     "PLR2004",
     "PLC0415",
+    "PLR0911",
+    "N812",
 ]
 
 [tool.ruff.lint.per-file-ignores]

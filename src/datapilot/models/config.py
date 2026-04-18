@@ -17,7 +17,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from datapilot.linking.config import LinkConfig
 
-EngineName = Literal["auto", "polars", "pandas", "dask", "cudf"]
+EngineName = Literal[
+    "auto", "polars", "pandas", "duckdb", "dask", "cudf", "spark"
+]
 LLMProvider = Literal["none", "bedrock", "ollama", "openai"]
 ReportFormat = Literal["json", "html", "markdown"]
 

@@ -13,12 +13,15 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from datapilot.linking.comparisons import ComparisonSpec
 
 Mode = Literal["dedupe", "link"]
+Backend = Literal["polars", "duckdb"]
 
 
 class LinkConfig(BaseModel):
     """Record-linkage model specification."""
 
     model_config = ConfigDict(validate_default=True)
+
+    backend: Backend = "polars"
 
     mode: Mode = "dedupe"
     unique_id_column: str
@@ -44,6 +47,9 @@ class LinkConfig(BaseModel):
     em_sample_size: int = Field(default=500_000, ge=10_000)
 
     max_pairs_warning: int = Field(default=5_000_000, gt=0)
+    # hard cap — linker raises rather than oomkill the process when
+    # blocking produces more pairs than this
+    max_pairs_hard_cap: int = Field(default=50_000_000, gt=0)
 
     @field_validator("comparisons")
     @classmethod
