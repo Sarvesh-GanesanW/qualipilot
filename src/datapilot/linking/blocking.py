@@ -61,8 +61,7 @@ def build_candidate_pairs(
         pairs = _cartesian(left, right)
     else:
         per_rule = [
-            _join_on_rule(left, right, rule)
-            for rule in blocking_rules
+            _join_on_rule(left, right, rule) for rule in blocking_rules
         ]
         pairs = pl.concat(per_rule, how="vertical_relaxed")
 
@@ -88,24 +87,19 @@ def _join_on_rule(
 ) -> pl.DataFrame:
     if not rule:
         return _cartesian(left, right)
-    return left.join(
-        right, on=rule, how="inner", suffix="__r"
-    ).select([_ID_LEFT, _ID_RIGHT])
+    return left.join(right, on=rule, how="inner", suffix="__r").select(
+        [_ID_LEFT, _ID_RIGHT]
+    )
 
 
-def _cartesian(
-    left: pl.DataFrame, right: pl.DataFrame
-) -> pl.DataFrame:
+def _cartesian(left: pl.DataFrame, right: pl.DataFrame) -> pl.DataFrame:
     # tiny datasets only — we warn loudly when this path is hit
     logger.warning(
-        "no blocking rules supplied; doing full cartesian product "
-        "(%d x %d)",
+        "no blocking rules supplied; doing full cartesian product (%d x %d)",
         left.height,
         right.height,
     )
-    return left.select(_ID_LEFT).join(
-        right.select(_ID_RIGHT), how="cross"
-    )
+    return left.select(_ID_LEFT).join(right.select(_ID_RIGHT), how="cross")
 
 
 def attach_comparison_columns(
@@ -128,7 +122,6 @@ def attach_comparison_columns(
     right_src = right_source.select([id_column, *columns]).rename(
         {id_column: _ID_RIGHT, **{c: f"{c}_r" for c in columns}}
     )
-    decorated = pairs.join(left_src, on=_ID_LEFT, how="inner").join(
+    return pairs.join(left_src, on=_ID_LEFT, how="inner").join(
         right_src, on=_ID_RIGHT, how="inner"
     )
-    return decorated

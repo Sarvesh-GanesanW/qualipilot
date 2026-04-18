@@ -10,7 +10,7 @@ enough data to estimate each level's m/u probability reliably.
 
 from __future__ import annotations
 
-from typing import Literal, Union
+from typing import Literal
 
 import numpy as np
 import polars as pl
@@ -65,11 +65,9 @@ class NumericDiff(_BaseComparison):
     thresholds: tuple[float, ...] = Field(default=(1.0, 5.0))
     levels: int = 0  # filled in validator below
 
-    def model_post_init(self, __context: object) -> None:  # noqa: D401
+    def model_post_init(self, __context: object) -> None:
         # levels = null + "far" + one per threshold
-        object.__setattr__(
-            self, "levels", 2 + len(self.thresholds)
-        )
+        object.__setattr__(self, "levels", 2 + len(self.thresholds))
 
     def assign_levels(self, pairs: pl.DataFrame) -> np.ndarray:
         left = pairs[self.left_col()].cast(pl.Float64).to_numpy()
@@ -102,10 +100,8 @@ class FuzzyString(_BaseComparison):
     thresholds: tuple[float, ...] = Field(default=(0.92, 0.80))
     levels: int = 0
 
-    def model_post_init(self, __context: object) -> None:  # noqa: D401
-        object.__setattr__(
-            self, "levels", 2 + len(self.thresholds)
-        )
+    def model_post_init(self, __context: object) -> None:
+        object.__setattr__(self, "levels", 2 + len(self.thresholds))
 
     def assign_levels(self, pairs: pl.DataFrame) -> np.ndarray:
         # tight C loop via rapidfuzz; no python-per-char work
@@ -127,15 +123,11 @@ class FuzzyString(_BaseComparison):
         null_mask = np.isnan(out)
         levels = np.ones(n, dtype=np.uint8)
         # smallest threshold first -> larger levels for higher sim
-        for rank, t in enumerate(
-            sorted(self.thresholds), start=2
-        ):
-            levels = np.where(out >= t, rank, levels).astype(
-                np.uint8
-            )
+        for rank, t in enumerate(sorted(self.thresholds), start=2):
+            levels = np.where(out >= t, rank, levels).astype(np.uint8)
         levels[null_mask] = 0
         return levels
 
 
 # pydantic discriminated union so YAML configs are type-safe
-ComparisonSpec = Union[ExactMatch, FuzzyString, NumericDiff]
+ComparisonSpec = ExactMatch | FuzzyString | NumericDiff

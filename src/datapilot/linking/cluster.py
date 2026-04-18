@@ -49,11 +49,6 @@ def cluster_from_pairs(
             parent[ra] = rb
 
     # compact the parent labels into contiguous 0..k cluster ids
-    roots = np.array(
-        [find(i) for i in range(n)], dtype=np.int64
-    )
+    roots = np.array([find(i) for i in range(n)], dtype=np.int64)
     _, cluster_ids = np.unique(roots, return_inverse=True)
-    return {
-        rid: int(cluster_ids[i])
-        for rid, i in index.items()
-    }
+    return {rid: int(cluster_ids[i]) for rid, i in index.items()}

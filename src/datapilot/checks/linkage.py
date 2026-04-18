@@ -56,12 +56,18 @@ def _engine_to_polars(engine: Any) -> Any:
     # PolarsEngine stores a DataFrame directly
     name = getattr(engine, "name", "")
     if name == "polars":
-        return engine._df  # noqa: SLF001
+        return engine._df
     if name == "pandas":
         import polars as pl
 
-        return pl.from_pandas(engine._df)  # noqa: SLF001
+        return pl.from_pandas(engine._df)
     # dask / cudf — round-trip via pandas
     import polars as pl
 
-    return pl.from_pandas(engine._df.compute() if hasattr(engine._df, "compute") else engine._df.to_pandas())  # noqa: SLF001
+    underlying = engine._df
+    materialised = (
+        underlying.compute()
+        if hasattr(underlying, "compute")
+        else underlying.to_pandas()
+    )
+    return pl.from_pandas(materialised)

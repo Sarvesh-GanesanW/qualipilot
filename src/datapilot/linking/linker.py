@@ -1,4 +1,7 @@
-"""Top-level orchestrator that stitches blocking + comparison + EM + cluster."""
+"""Top-level orchestrator for the linking pipeline.
+
+Stitches blocking, comparison, EM parameter fitting, and clustering.
+"""
 
 from __future__ import annotations
 
@@ -32,9 +35,7 @@ class LinkageResult:
 
     def match_pairs(self, threshold: float) -> pl.DataFrame:
         """Return only pairs above the given probability threshold."""
-        return self.pairs.filter(
-            pl.col("match_probability") >= threshold
-        )
+        return self.pairs.filter(pl.col("match_probability") >= threshold)
 
     def summary(self) -> dict[str, Any]:
         total = self.pairs.height
@@ -119,9 +120,7 @@ class RecordLinker:
             )
 
         t0 = time.perf_counter()
-        compare_columns = [
-            c.column for c in self.config.comparisons
-        ]
+        compare_columns = [c.column for c in self.config.comparisons]
         decorated = attach_comparison_columns(
             pairs,
             self._df,
@@ -143,9 +142,7 @@ class RecordLinker:
             # fit on a random subsample so EM stays cheap; score all
             # pairs with the learned parameters after
             rng = np.random.default_rng(0)
-            idx = rng.choice(
-                levels.shape[0], size=sample_size, replace=False
-            )
+            idx = rng.choice(levels.shape[0], size=sample_size, replace=False)
             em_levels = levels[idx]
             logger.info(
                 "em fitting on %d/%d sampled pairs",
@@ -164,9 +161,7 @@ class RecordLinker:
         timings["em_ms"] = _ms_since(t0)
 
         t0 = time.perf_counter()
-        probs = score_pairs(
-            levels, params["m"], params["u"], params["lambda"]
-        )
+        probs = score_pairs(levels, params["m"], params["u"], params["lambda"])
         timings["score_ms"] = _ms_since(t0)
 
         scored = decorated.select(
@@ -232,9 +227,7 @@ def _cluster_if_dedupe(
     if config.mode != "dedupe":
         return {}
     threshold = config.match_threshold_probability
-    confident = scored.filter(
-        pl.col("match_probability") >= threshold
-    )
+    confident = scored.filter(pl.col("match_probability") >= threshold)
     if confident.height == 0:
         # everyone lives in their own singleton cluster
         ids = df[config.unique_id_column].to_numpy()

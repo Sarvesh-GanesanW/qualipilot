@@ -59,9 +59,9 @@ def estimate_parameters(
     u = u_f64.astype(np.float32)
     lam = float(prior)
 
-    level_mask = _build_level_mask(
-        n_levels_per_comp, max_levels
-    ).astype(np.float32)
+    level_mask = _build_level_mask(n_levels_per_comp, max_levels).astype(
+        np.float32
+    )
 
     prev_m = m.copy()
     prev_u = u.copy()
@@ -92,9 +92,7 @@ def estimate_parameters(
             np.exp(num - max_ab, dtype=np.float32)
             + np.exp(den_other - max_ab, dtype=np.float32)
         )
-        responsibilities = np.exp(
-            num - log_denom, dtype=np.float32
-        )
+        responsibilities = np.exp(num - log_denom, dtype=np.float32)
 
         lam = float(responsibilities.mean())
         not_r = 1.0 - responsibilities
@@ -125,9 +123,7 @@ def estimate_parameters(
         prev_m = m.copy()
         prev_u = u.copy()
 
-        logger.debug(
-            "em step %d  lambda=%.6f  delta=%.6e", step, lam, delta
-        )
+        logger.debug("em step %d  lambda=%.6f  delta=%.6e", step, lam, delta)
         if delta < tol:
             logger.info(
                 "em converged in %d iterations (lambda=%.6f)",
@@ -136,9 +132,7 @@ def estimate_parameters(
             )
             break
     else:
-        logger.info(
-            "em stopped at max_iter=%d (lambda=%.6f)", max_iter, lam
-        )
+        logger.info("em stopped at max_iter=%d (lambda=%.6f)", max_iter, lam)
 
     return {"m": m, "u": u, "lambda": lam}
 
@@ -154,12 +148,8 @@ def score_pairs(
     log_m = np.log(m + _TINY, dtype=np.float32)
     log_u = np.log(u + _TINY, dtype=np.float32)
 
-    log_m_product = np.take_along_axis(
-        log_m, levels_t, axis=1
-    ).T.sum(axis=1)
-    log_u_product = np.take_along_axis(
-        log_u, levels_t, axis=1
-    ).T.sum(axis=1)
+    log_m_product = np.take_along_axis(log_m, levels_t, axis=1).T.sum(axis=1)
+    log_u_product = np.take_along_axis(log_u, levels_t, axis=1).T.sum(axis=1)
 
     log_lam = float(np.log(lam + _TINY))
     log_1mlam = float(np.log(1.0 - lam + _TINY))
@@ -197,9 +187,9 @@ def _initialise(
             m[c, 1:top] = 0.25 / max(top - 1, 1)
         m[c, 0] = 0.05  # null / missing rarely true-match
 
-        counts = np.bincount(
-            levels[:, c], minlength=max_levels
-        ).astype(np.float64)
+        counts = np.bincount(levels[:, c], minlength=max_levels).astype(
+            np.float64
+        )
         total = counts.sum() + _TINY
         u[c, :] = counts / total
 

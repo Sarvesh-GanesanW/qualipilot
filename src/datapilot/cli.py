@@ -11,6 +11,7 @@ import sys
 from pathlib import Path
 from typing import Annotated, Any
 
+import polars as pl
 import typer
 from rich.console import Console
 from rich.table import Table
@@ -288,6 +289,141 @@ def _compute_exit_code(report: QualityReport, fail_on: str) -> int:
 
 # kept to satisfy linters expecting a known symbol
 _Any = Any
+
+
+@app.command("link")
+def link_command(
+    input_path: Annotated[
+        Path,
+        typer.Argument(
+            exists=True,
+            readable=True,
+            help="CSV/Parquet file to dedupe.",
+        ),
+    ],
+    id_column: Annotated[
+        str,
+        typer.Option("--id", help="Unique id column."),
+    ] = "id",
+    compare: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--compare",
+            help=(
+                'Repeatable. "<col>:exact" | "<col>:fuzzy:0.92,0.80" '
+                '| "<col>:numeric:1.0,5.0"'
+            ),
+        ),
+    ] = None,
+    block: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--block",
+            help=(
+                "Repeatable. Comma-joined column list; records that "
+                "agree on every column block together."
+            ),
+        ),
+    ] = None,
+    threshold: Annotated[
+        float,
+        typer.Option(
+            "--threshold",
+            help="Probability at which pairs count as matches.",
+        ),
+    ] = 0.9,
+    output: Annotated[
+        Path | None,
+        typer.Option(
+            "--output",
+            "-o",
+            help="Write linkage result JSON here.",
+        ),
+    ] = None,
+) -> None:
+    """Run in-house probabilistic record linkage / dedup."""
+    from datapilot.linking import (
+        LinkConfig,
+        RecordLinker,
+    )
+
+    if not compare:
+        raise typer.BadParameter("at least one --compare spec is required")
+
+    comparisons = [_parse_compare(spec) for spec in compare]
+    blocking_rules = [
+        [c.strip() for c in b.split(",") if c.strip()] for b in (block or [])
+    ]
+
+    cfg = LinkConfig(
+        mode="dedupe",
+        unique_id_column=id_column,
+        comparisons=comparisons,
+        blocking_rules=blocking_rules,
+        match_threshold_probability=threshold,
+    )
+
+    df = _read_any(input_path)
+    result = RecordLinker(df, cfg).run()
+
+    summary = result.summary()
+    console.print_json(data=summary)
+
+    if output is not None:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        import json
+
+        payload = {
+            "summary": summary,
+            "matched_pairs": (
+                result.pairs.filter(
+                    pl.col("match_probability") >= threshold
+                ).to_dicts()
+            ),
+            "clusters": {str(k): v for k, v in result.clusters.items()},
+        }
+        output.write_text(
+            json.dumps(payload, indent=2, default=str),
+            encoding="utf-8",
+        )
+        console.print(f"linkage written to [bold]{output}[/bold]")
+
+
+def _parse_compare(spec: str):
+    """Turn ``"name:fuzzy:0.92,0.80"`` into a ComparisonSpec."""
+    from datapilot.linking import ExactMatch, FuzzyString, NumericDiff
+
+    parts = spec.split(":", 2)
+    if len(parts) < 2:
+        raise typer.BadParameter(f"invalid --compare spec: {spec!r}")
+    column, kind = parts[0], parts[1]
+    if kind == "exact":
+        return ExactMatch(column=column)
+    if kind == "fuzzy":
+        thresholds = (
+            _parse_floats(parts[2]) if len(parts) == 3 else (0.92, 0.80)
+        )
+        return FuzzyString(column=column, thresholds=thresholds)
+    if kind == "numeric":
+        thresholds = _parse_floats(parts[2]) if len(parts) == 3 else (1.0, 5.0)
+        return NumericDiff(column=column, thresholds=thresholds)
+    raise typer.BadParameter(f"unknown comparison kind: {kind!r}")
+
+
+def _parse_floats(raw: str) -> tuple[float, ...]:
+    return tuple(float(x) for x in raw.split(",") if x.strip())
+
+
+def _read_any(path: Path) -> pl.DataFrame:
+    """Minimal reader used by the link subcommand."""
+    suffix = path.suffix.lower()
+    if suffix == ".csv":
+        return pl.read_csv(path)
+    if suffix in {".parquet", ".pq"}:
+        return pl.read_parquet(path)
+    if suffix in {".ndjson", ".jsonl"}:
+        return pl.read_ndjson(path)
+    raise typer.BadParameter(f"unsupported file type: {suffix}")
 
 
 if __name__ == "__main__":  # pragma: no cover

@@ -191,9 +191,27 @@ make lint typecheck test
 
 ---
 
+## Record linkage / probabilistic dedup
+
+Beyond exact duplicates, datapilot ships an in-house Fellegi-Sunter
+linker — no external splink dependency. Polars blocking, rapidfuzz
+string distance, numpy EM. 1M rows in ~10 s on a laptop.
+
+```bash
+datapilot link customers.csv \
+    --id customer_id \
+    --compare "name:fuzzy:0.92,0.75" \
+    --compare "postcode:exact" \
+    --block "postcode" \
+    --threshold 0.9
+```
+
+Full details: [`docs/LINKING.md`](docs/LINKING.md).
+
 ## Docs
 
 * [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — module layout + data flow
+* [`docs/LINKING.md`](docs/LINKING.md) — probabilistic dedup / linkage
 * [`docs/DEEP_DIVE.md`](docs/DEEP_DIVE.md) — audit of the v1 codebase
 * [`docs/DEPLOY.md`](docs/DEPLOY.md) — cloud + on-prem deployment notes
 * [`docs/MIGRATION.md`](docs/MIGRATION.md) — upgrading from v1.x

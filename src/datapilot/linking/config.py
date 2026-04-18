@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from datapilot.linking.comparisons import ComparisonSpec
 
@@ -17,6 +17,8 @@ Mode = Literal["dedupe", "link"]
 
 class LinkConfig(BaseModel):
     """Record-linkage model specification."""
+
+    model_config = ConfigDict(validate_default=True)
 
     mode: Mode = "dedupe"
     unique_id_column: str
@@ -27,12 +29,12 @@ class LinkConfig(BaseModel):
     blocking_rules: list[list[str]] = Field(default_factory=list)
 
     prior_match_probability: float = Field(
-        default=0.001, gt=0, lt=1,
+        default=0.001,
+        gt=0,
+        lt=1,
         description="lambda seed; small because most pairs are non-matches",
     )
-    match_threshold_probability: float = Field(
-        default=0.9, ge=0.5, lt=1.0
-    )
+    match_threshold_probability: float = Field(default=0.9, ge=0.5, lt=1.0)
 
     em_max_iter: int = Field(default=15, ge=1, le=200)
     em_tolerance: float = Field(default=1e-3, gt=0)
