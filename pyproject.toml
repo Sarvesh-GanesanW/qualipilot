@@ -53,6 +53,7 @@ dask = ["dask[dataframe]>=2024.8"]
 ollama = []
 openai = ["openai>=1.50"]
 viz = ["matplotlib>=3.9"]
+linking = ["rapidfuzz>=3.9", "numpy>=2.0"]
 dev = [
     "ruff>=0.6",
     "mypy>=1.11",
@@ -70,6 +71,8 @@ all = [
     "dask[dataframe]>=2024.8",
     "openai>=1.50",
     "matplotlib>=3.9",
+    "rapidfuzz>=3.9",
+    "numpy>=2.0",
 ]
 
 [project.urls]
