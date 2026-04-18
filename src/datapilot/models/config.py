@@ -15,6 +15,8 @@ from typing import Literal
 from pydantic import BaseModel, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from datapilot.linking.config import LinkConfig
+
 EngineName = Literal["auto", "polars", "pandas", "dask", "cudf"]
 LLMProvider = Literal["none", "bedrock", "ollama", "openai"]
 ReportFormat = Literal["json", "html", "markdown"]
@@ -56,6 +58,9 @@ class CheckConfig(BaseModel):
     freshness_columns: list[str] = Field(default_factory=list)
     freshness_max_age_hours: float = Field(default=24.0, gt=0)
     sample_size: int = Field(default=10, ge=0, le=1000)
+
+    # probabilistic dedup — None disables the LinkageCheck
+    linkage: LinkConfig | None = None
 
 
 class LLMConfig(BaseModel):

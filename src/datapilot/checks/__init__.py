@@ -8,6 +8,7 @@ from datapilot.checks.base import Check, CheckContext
 from datapilot.checks.cardinality import CardinalityCheck
 from datapilot.checks.duplicates import DuplicatesCheck
 from datapilot.checks.freshness import FreshnessCheck
+from datapilot.checks.linkage import LinkageCheck
 from datapilot.checks.missing import MissingValuesCheck
 from datapilot.checks.outliers import OutliersCheck
 from datapilot.checks.ranges import RangesCheck
@@ -20,6 +21,7 @@ __all__ = [
     "DataTypesCheck",
     "DuplicatesCheck",
     "FreshnessCheck",
+    "LinkageCheck",
     "MissingValuesCheck",
     "OutliersCheck",
     "RangesCheck",

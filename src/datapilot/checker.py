@@ -15,6 +15,7 @@ from datapilot.checks import (
     DataTypesCheck,
     DuplicatesCheck,
     FreshnessCheck,
+    LinkageCheck,
     MissingValuesCheck,
     OutliersCheck,
     RangesCheck,
@@ -116,6 +117,8 @@ class DataQualityChecker:
             checks.append(CardinalityCheck())
         if cfg.freshness:
             checks.append(FreshnessCheck())
+        if cfg.linkage is not None:
+            checks.append(LinkageCheck())
         return checks
 
     def _maybe_render_llm_report(self, report: QualityReport) -> str | None:
