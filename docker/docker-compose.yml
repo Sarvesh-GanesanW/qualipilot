@@ -1,0 +1,51 @@
+services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: datapilot-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-models:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  datapilot:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      args:
+        EXTRAS: "bedrock"
+    image: datapilot:latest
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      DATAPILOT_JSON_LOGS: "1"
+      # uncomment to wire up bedrock from the host keychain
+      # AWS_PROFILE: ${AWS_PROFILE:-default}
+      # AWS_REGION: ${AWS_REGION:-us-east-1}
+    volumes:
+      - ../examples:/data:ro
+      - ./reports:/reports
+      # mount aws creds read-only so the container can assume your role
+      - ${HOME}/.aws:/home/datapilot/.aws:ro
+    entrypoint: ["datapilot"]
+    command:
+      - "check"
+      - "/data/sample.csv"
+      - "--engine"
+      - "polars"
+      - "--output"
+      - "/reports/report.html"
+      - "--llm"
+      - "ollama"
+      - "--base-url"
+      - "http://ollama:11434"
+      - "--model"
+      - "llama3.2:latest"
+
+volumes:
+  ollama-models:
