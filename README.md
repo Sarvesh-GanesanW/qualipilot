@@ -215,6 +215,7 @@ Full details: [`docs/LINKING.md`](docs/LINKING.md).
 * [`docs/DEEP_DIVE.md`](docs/DEEP_DIVE.md) — audit of the v1 codebase
 * [`docs/DEPLOY.md`](docs/DEPLOY.md) — cloud + on-prem deployment notes
 * [`docs/MIGRATION.md`](docs/MIGRATION.md) — upgrading from v1.x
+* [`docs/RUST_CONVERSION.md`](docs/RUST_CONVERSION.md) — should we port to Rust? (tldr: hybrid, not rewrite)
 
 ## License
 
