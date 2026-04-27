@@ -8,7 +8,7 @@ comparable up to ~1M rows, past that prefer Polars or Dask.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pandas as pd
 
@@ -98,7 +98,10 @@ class PandasEngine(Engine):
         subset: list[str] | None = None,
     ) -> list[dict[str, Any]]:
         mask = self._df.duplicated(subset=subset, keep=False)
-        return self._df[mask].head(n).to_dict(orient="records")
+        return cast(
+            list[dict[str, Any]],
+            self._df[mask].head(n).to_dict(orient="records"),
+        )
 
     def count_outside(
         self,
@@ -118,7 +121,10 @@ class PandasEngine(Engine):
     ) -> list[dict[str, Any]]:
         series = self._df[column]
         mask = (series < low) | (series > high)
-        return self._df[mask].head(n).to_dict(orient="records")
+        return cast(
+            list[dict[str, Any]],
+            self._df[mask].head(n).to_dict(orient="records"),
+        )
 
     def max_datetime(self, column: str) -> Any:
         val = self._df[column].max()

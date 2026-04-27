@@ -9,7 +9,7 @@ from typing import Any
 
 from qualipilot.engines.base import Engine
 from qualipilot.models.config import CheckConfig
-from qualipilot.models.results import CheckResult
+from qualipilot.models.results import CheckResult, Severity
 
 
 @dataclass(slots=True)
@@ -51,7 +51,7 @@ class Check(ABC):
         )
 
     @abstractmethod
-    def _execute(self, ctx: CheckContext) -> tuple[str, dict[str, Any]]:
+    def _execute(self, ctx: CheckContext) -> tuple[Severity, dict[str, Any]]:
         """Run the check logic.
 
         Returns:

@@ -8,7 +8,7 @@ config change, not a code change.
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, cast
 
 from tenacity import (
     retry,
@@ -87,7 +87,8 @@ class BedrockProvider(LLMProvider):
         )
         self._log_usage(response)
         try:
-            return response["output"]["message"]["content"][0]["text"]
+            text = response["output"]["message"]["content"][0]["text"]
+            return cast(str, text)
         except (KeyError, IndexError) as exc:
             raise RuntimeError(
                 f"unexpected bedrock response shape: {response!r}"

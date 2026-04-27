@@ -11,12 +11,13 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from qualipilot.checks.base import Check, CheckContext
+from qualipilot.models.results import Severity
 
 
 class FreshnessCheck(Check):
     name = "freshness"
 
-    def _execute(self, ctx: CheckContext) -> tuple[str, dict[str, Any]]:
+    def _execute(self, ctx: CheckContext) -> tuple[Severity, dict[str, Any]]:
         cols = ctx.config.freshness_columns or ctx.engine.datetime_columns()
         if not cols:
             return "ok", {"per_column": []}
@@ -55,7 +56,7 @@ class FreshnessCheck(Check):
                 }
             )
 
-        severity = "error" if any_stale else "ok"
+        severity: Severity = "error" if any_stale else "ok"
         return severity, {"per_column": report}
 
 

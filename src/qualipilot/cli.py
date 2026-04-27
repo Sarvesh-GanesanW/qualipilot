@@ -389,7 +389,7 @@ def link_command(
         console.print(f"linkage written to [bold]{output}[/bold]")
 
 
-def _parse_compare(spec: str):
+def _parse_compare(spec: str) -> Any:
     """Turn ``"name:fuzzy:0.92,0.80"`` into a ComparisonSpec."""
     from qualipilot.linking import ExactMatch, FuzzyString, NumericDiff
 

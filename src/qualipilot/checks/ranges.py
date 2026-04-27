@@ -9,12 +9,13 @@ from __future__ import annotations
 from typing import Any
 
 from qualipilot.checks.base import Check, CheckContext
+from qualipilot.models.results import Severity
 
 
 class RangesCheck(Check):
     name = "ranges"
 
-    def _execute(self, ctx: CheckContext) -> tuple[str, dict[str, Any]]:
+    def _execute(self, ctx: CheckContext) -> tuple[Severity, dict[str, Any]]:
         ranges = ctx.config.column_ranges
         if not ranges:
             return "ok", {"per_column": []}
@@ -59,5 +60,5 @@ class RangesCheck(Check):
                 }
             )
 
-        severity = "error" if any_violations else "ok"
+        severity: Severity = "error" if any_violations else "ok"
         return severity, {"per_column": report}

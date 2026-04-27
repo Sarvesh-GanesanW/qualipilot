@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Any
 
 from qualipilot.checks.base import Check, CheckContext
+from qualipilot.models.results import Severity
 
 
 class LinkageCheck(Check):
@@ -20,7 +21,7 @@ class LinkageCheck(Check):
 
     name = "linkage"
 
-    def _execute(self, ctx: CheckContext) -> tuple[str, dict[str, Any]]:
+    def _execute(self, ctx: CheckContext) -> tuple[Severity, dict[str, Any]]:
         link_cfg = ctx.config.linkage
         if link_cfg is None:
             return "ok", {"skipped": True}
@@ -43,7 +44,7 @@ class LinkageCheck(Check):
             sz for sz in counts.values() if sz > 1
         )
 
-        severity = "warn" if multi > 0 else "ok"
+        severity: Severity = "warn" if multi > 0 else "ok"
         return severity, {
             **summary,
             "duplicate_clusters": multi,
