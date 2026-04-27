@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta
 import pandas as pd
 import pytest
 
-from datapilot.checks import (
+from qualipilot.checks import (
     CardinalityCheck,
     CheckContext,
     DataTypesCheck,
@@ -17,8 +17,8 @@ from datapilot.checks import (
     OutliersCheck,
     RangesCheck,
 )
-from datapilot.engines import PolarsEngine
-from datapilot.models.config import CheckConfig, ColumnRange
+from qualipilot.engines import PolarsEngine
+from qualipilot.models.config import CheckConfig, ColumnRange
 
 
 def _ctx(df: pd.DataFrame, cfg: CheckConfig | None = None) -> CheckContext:

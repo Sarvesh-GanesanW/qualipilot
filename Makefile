@@ -34,25 +34,25 @@ fmt:
 	ruff format src tests
 
 typecheck:
-	mypy src/datapilot
+	mypy src/qualipilot
 
 test:
 	pytest
 
 cov:
-	pytest --cov=datapilot --cov-report=term-missing --cov-report=html
+	pytest --cov=qualipilot --cov-report=term-missing --cov-report=html
 
 build:
 	$(UV) build
 
 docker:
-	docker build -f docker/Dockerfile -t datapilot:latest .
+	docker build -f docker/Dockerfile -t qualipilot:latest .
 
 docker-local:
 	docker compose -f docker/docker-compose.yml up --build
 
 image-lambda:
-	docker build -f docker/Dockerfile.lambda -t datapilot-lambda:latest .
+	docker build -f docker/Dockerfile.lambda -t qualipilot-lambda:latest .
 
 clean:
 	rm -rf build dist .coverage coverage.xml htmlcov .pytest_cache .mypy_cache .ruff_cache .hypothesis

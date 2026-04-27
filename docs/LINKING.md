@@ -1,6 +1,6 @@
 # Record linkage (probabilistic dedup)
 
-datapilot ships an in-house Fellegi-Sunter record linker. No
+qualipilot ships an in-house Fellegi-Sunter record linker. No
 external dependency on splink — we implement the algorithm directly
 with polars (blocking), rapidfuzz (string distance), and numpy (EM).
 
@@ -51,7 +51,7 @@ that reflect how aggressively you want to treat near-matches.
 
 ```python
 import polars as pl
-from datapilot.linking import (
+from qualipilot.linking import (
     RecordLinker,
     LinkConfig,
     ExactMatch,
@@ -87,7 +87,7 @@ print(result.timings_ms)              # stage-by-stage breakdown
 ## CLI
 
 ```bash
-datapilot link customers.csv \
+qualipilot link customers.csv \
     --id customer_id \
     --compare "name:fuzzy:0.92,0.75" \
     --compare "postcode:exact" \

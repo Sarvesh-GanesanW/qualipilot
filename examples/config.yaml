@@ -1,6 +1,6 @@
-# full datapilot config for the sample dataset.
+# full qualipilot config for the sample dataset.
 # run with:
-#     datapilot check examples/sample.csv --config examples/config.yaml
+#     qualipilot check examples/sample.csv --config examples/config.yaml
 
 engine: polars
 report_format: json

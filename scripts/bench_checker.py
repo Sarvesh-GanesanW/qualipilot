@@ -14,8 +14,8 @@ from pathlib import Path
 import numpy as np
 import polars as pl
 
-from datapilot import DataQualityChecker, DatapilotConfig
-from datapilot.models.config import CheckConfig, ColumnRange
+from qualipilot import DataQualityChecker, QualipilotConfig
+from qualipilot.models.config import CheckConfig, ColumnRange
 
 OUT = Path(__file__).parent.parent / "reports" / "bench_checker.txt"
 OUT.parent.mkdir(parents=True, exist_ok=True)
@@ -43,7 +43,7 @@ def build(n: int) -> "pl.DataFrame":
 def run(
     df: "pl.DataFrame", engine: str, size: int
 ) -> None:
-    cfg = DatapilotConfig(
+    cfg = QualipilotConfig(
         engine=engine,  # type: ignore[arg-type]
         checks=CheckConfig(
             column_ranges={

@@ -1,6 +1,6 @@
 # Deep Dive — audit of the v1 codebase
 
-This is the exhaustive list of problems the v1 `datapilot/checker.py`
+This is the exhaustive list of problems the v1 `qualipilot/checker.py`
 shipped with, grouped by category. The v2 rewrite addresses every
 item here.
 
@@ -30,7 +30,7 @@ item here.
 ## 2. Packaging & distribution
 
 11. `setup.py` only — no `pyproject.toml`, no PEP 621 metadata.
-12. Package directory on disk (`datapilot/`) did not match the PyPI
+12. Package directory on disk (`qualipilot/`) did not match the PyPI
     name (`data_quality_checker`), so `pip search` vs. `import`
     always confused new users.
 13. No optional dependency groups — installing the core pulled

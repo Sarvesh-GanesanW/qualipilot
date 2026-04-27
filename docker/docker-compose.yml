@@ -1,7 +1,7 @@
 services:
   ollama:
     image: ollama/ollama:latest
-    container_name: datapilot-ollama
+    container_name: qualipilot-ollama
     ports:
       - "11434:11434"
     volumes:
@@ -12,18 +12,18 @@ services:
       timeout: 5s
       retries: 5
 
-  datapilot:
+  qualipilot:
     build:
       context: ..
       dockerfile: docker/Dockerfile
       args:
         EXTRAS: "bedrock"
-    image: datapilot:latest
+    image: qualipilot:latest
     depends_on:
       ollama:
         condition: service_healthy
     environment:
-      DATAPILOT_JSON_LOGS: "1"
+      QUALIPILOT_JSON_LOGS: "1"
       # uncomment to wire up bedrock from the host keychain
       # AWS_PROFILE: ${AWS_PROFILE:-default}
       # AWS_REGION: ${AWS_REGION:-us-east-1}
@@ -31,8 +31,8 @@ services:
       - ../examples:/data:ro
       - ./reports:/reports
       # mount aws creds read-only so the container can assume your role
-      - ${HOME}/.aws:/home/datapilot/.aws:ro
-    entrypoint: ["datapilot"]
+      - ${HOME}/.aws:/home/qualipilot/.aws:ro
+    entrypoint: ["qualipilot"]
     command:
       - "check"
       - "/data/sample.csv"

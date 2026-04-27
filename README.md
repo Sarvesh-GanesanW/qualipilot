@@ -1,4 +1,4 @@
-# datapilot
+# qualipilot
 
 Production-grade data quality checker for Python. Runs structural and
 statistical checks on any tabular dataset (CSV / Parquet / JSON / Pandas /
@@ -30,11 +30,11 @@ Polars / Dask / cuDF) and, optionally, asks an LLM — **AWS Bedrock**,
 ### Manual
 
 ```bash
-pip install data-pilot-checker                 # core
-pip install "data-pilot-checker[bedrock]"      # + boto3 for AWS Bedrock
-pip install "data-pilot-checker[ollama]"       # + httpx (already core)
-pip install "data-pilot-checker[dask]"         # + dask[dataframe]
-pip install "data-pilot-checker[all]"          # everything except cuDF
+pip install qualipilot                 # core
+pip install "qualipilot[bedrock]"      # + boto3 for AWS Bedrock
+pip install "qualipilot[ollama]"       # + httpx (already core)
+pip install "qualipilot[dask]"         # + dask[dataframe]
+pip install "qualipilot[all]"          # everything except cuDF
 ```
 
 cuDF (GPU) needs the RAPIDS conda channel — see
@@ -45,7 +45,7 @@ cuDF (GPU) needs the RAPIDS conda channel — see
 ## Quickstart (CLI)
 
 ```bash
-datapilot check data.csv \
+qualipilot check data.csv \
     --engine polars \
     --range amount=0,100000 \
     --output reports/data.quality.html \
@@ -64,12 +64,12 @@ datapilot check data.csv \
 
 ```python
 import pandas as pd
-from datapilot import DataQualityChecker, DatapilotConfig
-from datapilot.models.config import CheckConfig, ColumnRange, LLMConfig
+from qualipilot import DataQualityChecker, QualipilotConfig
+from qualipilot.models.config import CheckConfig, ColumnRange, LLMConfig
 
 df = pd.read_csv("orders.csv")
 
-config = DatapilotConfig(
+config = QualipilotConfig(
     engine="polars",
     checks=CheckConfig(
         column_ranges={"amount": ColumnRange(min=0, max=100_000)},
@@ -143,7 +143,7 @@ Provider Model, Meta Llama, Mistral, Cohere, etc. — you just change
 docker compose -f docker/docker-compose.yml up --build
 ```
 
-This brings up `ollama` and a `datapilot` container wired to it, and
+This brings up `ollama` and a `qualipilot` container wired to it, and
 runs the sample check end-to-end.
 
 ### AWS Lambda (container image)
@@ -151,17 +151,17 @@ runs the sample check end-to-end.
 ```bash
 cd deploy/terraform
 terraform init
-terraform apply -var project=datapilot -var aws_profile=sre-tea
+terraform apply -var project=qualipilot -var aws_profile=sre-tea
 
 # build + push the image to the ECR repo terraform just made
 aws ecr get-login-password | docker login --username AWS --password-stdin \
     $(terraform output -raw ecr_repository_url | cut -d/ -f1)
-docker build -f ../../docker/Dockerfile.lambda -t datapilot-lambda:latest ../..
-docker tag datapilot-lambda:latest "$(terraform output -raw ecr_repository_url):latest"
+docker build -f ../../docker/Dockerfile.lambda -t qualipilot-lambda:latest ../..
+docker tag qualipilot-lambda:latest "$(terraform output -raw ecr_repository_url):latest"
 docker push "$(terraform output -raw ecr_repository_url):latest"
 
 aws lambda update-function-code \
-    --function-name datapilot \
+    --function-name qualipilot \
     --image-uri "$(terraform output -raw ecr_repository_url):latest"
 ```
 
@@ -169,7 +169,7 @@ Invoke with:
 
 ```bash
 aws lambda invoke \
-    --function-name datapilot \
+    --function-name qualipilot \
     --payload '{"s3_uri":"s3://my-bucket/events.parquet"}' \
     response.json
 ```
@@ -193,12 +193,12 @@ make lint typecheck test
 
 ## Record linkage / probabilistic dedup
 
-Beyond exact duplicates, datapilot ships an in-house Fellegi-Sunter
+Beyond exact duplicates, qualipilot ships an in-house Fellegi-Sunter
 linker — no external splink dependency. Polars blocking, rapidfuzz
 string distance, numpy EM. 1M rows in ~10 s on a laptop.
 
 ```bash
-datapilot link customers.csv \
+qualipilot link customers.csv \
     --id customer_id \
     --compare "name:fuzzy:0.92,0.75" \
     --compare "postcode:exact" \

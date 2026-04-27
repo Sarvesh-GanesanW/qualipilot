@@ -7,7 +7,7 @@ from pathlib import Path
 
 from typer.testing import CliRunner
 
-from datapilot.cli import app
+from qualipilot.cli import app
 
 runner = CliRunner()
 
@@ -15,7 +15,7 @@ runner = CliRunner()
 def test_version() -> None:
     result = runner.invoke(app, ["version"])
     assert result.exit_code == 0
-    assert "datapilot" in result.stdout
+    assert "qualipilot" in result.stdout
 
 
 def test_check_writes_json(tmp_csv: Path, tmp_path: Path) -> None:

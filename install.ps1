@@ -1,4 +1,4 @@
-# one-click installer for datapilot on windows powershell.
+# one-click installer for qualipilot on windows powershell.
 #
 # usage:
 #     .\install.ps1              # core only
@@ -55,4 +55,4 @@ Write-Host ""
 Write-Host "installed. activate your shell with:"
 Write-Host "    .\$VenvDir\Scripts\Activate.ps1"
 Write-Host "then try:"
-Write-Host "    datapilot --help"
+Write-Host "    qualipilot --help"

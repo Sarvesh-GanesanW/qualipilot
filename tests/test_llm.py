@@ -10,8 +10,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from datapilot.llm import build_provider
-from datapilot.models.config import LLMConfig
+from qualipilot.llm import build_provider
+from qualipilot.models.config import LLMConfig
 
 
 def test_null_provider_returns_empty() -> None:

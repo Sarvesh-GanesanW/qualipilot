@@ -154,7 +154,7 @@ calculus on a full port is negative.
 ## What the hybrid looks like
 
 ```
-datapilot/
+qualipilot/
 ├── cli.py                      # Python (Typer)
 ├── checker.py                  # Python orchestrator
 ├── engines/                    # Python; heavy lifting in Polars/DuckDB/Spark

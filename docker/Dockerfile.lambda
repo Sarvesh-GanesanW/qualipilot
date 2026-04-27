@@ -2,7 +2,7 @@ FROM public.ecr.aws/lambda/python:3.12
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    DATAPILOT_JSON_LOGS=1
+    QUALIPILOT_JSON_LOGS=1
 
 # keep this minimal — lambda pulls boto3 from the runtime so we only
 # install our own wheel and the bedrock extra
@@ -12,4 +12,4 @@ COPY src ${LAMBDA_TASK_ROOT}/src
 RUN pip install --no-cache-dir \
     "${LAMBDA_TASK_ROOT}[bedrock]" --target "${LAMBDA_TASK_ROOT}"
 
-CMD ["datapilot.lambda_handler.handler"]
+CMD ["qualipilot.lambda_handler.handler"]

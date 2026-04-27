@@ -21,7 +21,7 @@ from typing import Any
 import numpy as np
 import polars as pl
 
-from datapilot.linking import (
+from qualipilot.linking import (
     ExactMatch,
     FuzzyString,
     LinkConfig,

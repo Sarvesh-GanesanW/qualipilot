@@ -1,7 +1,7 @@
 variable "project" {
   description = "Short name, used for every resource prefix."
   type        = string
-  default     = "datapilot"
+  default     = "qualipilot"
 }
 
 variable "region" {

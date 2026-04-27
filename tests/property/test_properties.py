@@ -10,9 +10,9 @@ import pandas as pd
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from datapilot.checks import CheckContext, MissingValuesCheck
-from datapilot.engines import PolarsEngine
-from datapilot.models.config import CheckConfig
+from qualipilot.checks import CheckContext, MissingValuesCheck
+from qualipilot.engines import PolarsEngine
+from qualipilot.models.config import CheckConfig
 
 _INT_OR_NONE = st.one_of(
     st.integers(min_value=-1_000_000, max_value=1_000_000),
