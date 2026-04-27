@@ -7,10 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.1] — 2026-04-28
+
+A maintenance release. No breaking API changes; the runtime behaviour
+of every public function is preserved unless explicitly noted. Mostly
+fixes for things the v2.0.0 wheel got wrong: a path-binding crash in
+the DuckDB engine, 35 latent `mypy --strict` errors despite shipping
+`py.typed`, an overpromising `Production/Stable` classifier, and a
+handful of CLI UX rough edges that turned every "Hello, qualipilot"
+moment into a 50-line Rich traceback.
+
 ### Changed
-- Lowered `Development Status` classifier from `5 - Production/Stable` to
-  `4 - Beta`. Several engines (Spark, Dask, DuckDB) and the Lambda handler
-  ship without test coverage; the previous classifier overpromised.
+- Lowered `Development Status` classifier from `5 - Production/Stable`
+  to `4 - Beta`. Several engines (Spark, Dask, DuckDB) and the Lambda
+  handler ship without test coverage; the previous classifier
+  overpromised.
 - `qualipilot.linking.em.estimate_parameters` now returns a typed
   `EMParams` (TypedDict). Callers that unpacked `params["m"]` etc. as
   the old `dict[str, np.ndarray | float]` keep working — the keys are
@@ -22,48 +33,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   proper `Choice` types rendered by Typer. Typos like `--engine polrs`
   exit cleanly with a parameter error instead of crashing inside
   `build_engine`. The accepted values stay identical.
-
-### Added
-- `LinkConfig.em_random_seed` (default `0`). The polars and DuckDB
-  linkers both honour it, replacing the previously hardcoded seed.
-  Useful when you want deterministic-but-different sampling across
-  comparative trials.
-- `LLMConfig` now carries a per-provider temperature validator. Setting
-  `provider="bedrock"` with `temperature > 1.0` raises at config time;
-  Bedrock would otherwise 400 mid-run.
-- Test suite for `qualipilot.engines.duckdb_engine` (was 0% covered,
-  now 87%). Includes parity tests against polars/pandas for null counts,
-  duplicates, quantiles, `count_outside`; from-CSV round-trip; isolation
-  test for two engines in the same process.
-
-### Fixed
-- `DuckDBEngine.from_any` no longer crashes on file paths. Previously
-  it passed the path as a `?` parameter to `read_csv_auto` /
-  `read_parquet` / `read_json_auto`; DuckDB rejects parameters in those
-  table-function slots with "Unexpected prepared parameter". The fix
-  inlines the path with single-quote escaping to keep the call
-  injection-safe.
-- Missing optional dependencies no longer dump a 50-line Rich
-  traceback. `qualipilot link` without `[linking]` and
-  `qualipilot check --llm bedrock` without `[bedrock]` now show a
-  one-line `error: <msg>` and exit 2. The fix wraps `app()` in a `_run`
-  entry point that catches `ImportError`, escapes Rich markup so
-  ``[linking]`` / ``[bedrock]`` survive intact, and disables Typer's
-  pretty-exception rendering for genuine optional-dep failures.
-- `qualipilot --version` now works (was `version` subcommand only).
-- CLI default log level is `WARNING` (was `INFO`). Old behaviour is one
-  flag away: `--log-level INFO`. Removes the wall of "running check:
-  ..." log lines new users used to see before the summary table.
-- The fuzzy linker raised a bare `ModuleNotFoundError: rapidfuzz`
-  inside a deep call stack when `[linking]` wasn't installed; it now
-  raises the same friendly `ImportError("install with ...[linking]")`
-  message we already use for boto3, dask, duckdb, etc.
-- `RangesCheck` now `warns` (not `ok`) when a configured range targets
-  a non-numeric column or a column missing from the dataset. Previously
-  these silently produced 0 violations and got masked under `severity:
-  ok`, hiding YAML typos like `column: status` with `[min: 0, max: 5]`.
-
-### Changed
 - `--llm` / `--model` help text now points users at sensible defaults
   per provider, and warns that `--model` is usually required when
   `--llm != none`.
@@ -79,13 +48,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `duplicates` includes a small sample table.
   Outlier phrasing changed from "columns evaluated: 3" to "numeric
   columns scanned: 3 (affected: 1)" — previous wording made it look
-  like only 3 of 6 columns were checked.
-  HTML keeps the full raw JSON payload available under a collapsed
-  `<details>` block, so the audit trail isn't lost.
+  like only 3 of 6 columns were checked. HTML keeps the full raw JSON
+  payload available under a collapsed `<details>` block, so the audit
+  trail isn't lost.
 
 ### Added
 - `python -m qualipilot` entry point (`__main__.py`).
+- `qualipilot --version` flag (was `version` subcommand only).
 - This `CHANGELOG.md`.
+- `LinkConfig.em_random_seed` (default `0`). The polars and DuckDB
+  linkers both honour it, replacing the previously hardcoded seed.
+  Useful when you want deterministic-but-different sampling across
+  comparative trials.
+- `LLMConfig` now carries a per-provider temperature validator. Setting
+  `provider="bedrock"` with `temperature > 1.0` raises at config time;
+  Bedrock would otherwise 400 mid-run.
+- Test suite for `qualipilot.engines.duckdb_engine` (was 0% covered,
+  now 87%). Includes parity tests against polars/pandas for null counts,
+  duplicates, quantiles, `count_outside`; from-CSV round-trip; isolation
+  test for two engines in the same process.
+- Test suite for `qualipilot.reporting` (markdown + html) asserting
+  affected columns surface by name.
 
 ### Fixed
 - `LICENSE` now uses ASCII quotes; some packaging tools mis-detect the
@@ -99,6 +82,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `llm/bedrock`, `logging_setup`, `lakehouse`, and `cli`. The package
   now type-checks cleanly under strict mode, matching its
   `Typing :: Typed` classifier and `py.typed` marker.
+- `DuckDBEngine.from_any` no longer crashes on file paths. Previously
+  it passed the path as a `?` parameter to `read_csv_auto` /
+  `read_parquet` / `read_json_auto`; DuckDB rejects parameters in those
+  table-function slots with "Unexpected prepared parameter". The fix
+  inlines the path with single-quote escaping to keep the call
+  injection-safe.
+- Missing optional dependencies no longer dump a 50-line Rich
+  traceback. `qualipilot link` without `[linking]` and
+  `qualipilot check --llm bedrock` without `[bedrock]` now show a
+  one-line `error: <msg>` and exit 2. The fix wraps `app()` in a `_run`
+  entry point that catches `ImportError`, escapes Rich markup so
+  `[linking]` / `[bedrock]` survive intact, and disables Typer's
+  pretty-exception rendering for genuine optional-dep failures.
+- CLI default log level is `WARNING` (was `INFO`). Old behaviour is one
+  flag away: `--log-level INFO`. Removes the wall of "running check:
+  ..." log lines new users used to see before the summary table.
+- The fuzzy linker raised a bare `ModuleNotFoundError: rapidfuzz`
+  inside a deep call stack when `[linking]` wasn't installed; it now
+  raises the same friendly `ImportError("install with ...[linking]")`
+  message we already use for boto3, dask, duckdb, etc.
+- `RangesCheck` now `warns` (not `ok`) when a configured range targets
+  a non-numeric column or a column missing from the dataset. Previously
+  these silently produced 0 violations and got masked under `severity:
+  ok`, hiding YAML typos like `column: status` with `[min: 0, max: 5]`.
 
 ## [2.0.0] — 2026-04-27
 
