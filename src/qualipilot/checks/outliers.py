@@ -11,12 +11,13 @@ import math
 from typing import Any
 
 from qualipilot.checks.base import Check, CheckContext
+from qualipilot.models.results import Severity
 
 
 class OutliersCheck(Check):
     name = "outliers"
 
-    def _execute(self, ctx: CheckContext) -> tuple[str, dict[str, Any]]:
+    def _execute(self, ctx: CheckContext) -> tuple[Severity, dict[str, Any]]:
         numeric = ctx.engine.numeric_columns()
         if not numeric:
             return "ok", {"per_column": []}
@@ -55,7 +56,7 @@ class OutliersCheck(Check):
                 }
             )
 
-        severity = "warn" if any_outliers else "ok"
+        severity: Severity = "warn" if any_outliers else "ok"
         return severity, {"per_column": report}
 
 

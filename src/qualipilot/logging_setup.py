@@ -54,8 +54,8 @@ def configure_logging(
 
     root = logging.getLogger()
     # wipe existing handlers so repeated calls in notebooks stay clean
-    for handler in list(root.handlers):
-        root.removeHandler(handler)
+    for existing in list(root.handlers):
+        root.removeHandler(existing)
 
     root.setLevel(level.upper())
 

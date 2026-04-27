@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import itertools
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from qualipilot.engines.base import Engine
 
@@ -85,11 +85,7 @@ class DuckDBEngine(Engine):
     # ---- structural info ----------------------------------------------
 
     def row_count(self) -> int:
-        return int(
-            self._con.execute(f"SELECT COUNT(*) FROM {self._view}").fetchone()[
-                0
-            ]
-        )
+        return int(self._scalar(f"SELECT COUNT(*) FROM {self._view}"))
 
     def columns(self) -> list[str]:
         return [
@@ -145,16 +141,14 @@ class DuckDBEngine(Engine):
             f'SUM(CASE WHEN "{c}" IS NULL THEN 1 ELSE 0 END) AS "{c}"'
             for c in cols
         )
-        row = self._con.execute(
-            f"SELECT {selects} FROM {self._view}"
-        ).fetchone()
+        row = self._row(f"SELECT {selects} FROM {self._view}")
         return {c: int(v or 0) for c, v in zip(cols, row, strict=True)}
 
     def distinct_count(self, column: str) -> int:
         return int(
-            self._con.execute(
+            self._scalar(
                 f'SELECT COUNT(DISTINCT "{column}") FROM {self._view}'
-            ).fetchone()[0]
+            )
         )
 
     def top_values(
@@ -184,9 +178,7 @@ class DuckDBEngine(Engine):
             for c in columns
             for q in qs
         )
-        row = self._con.execute(
-            f"SELECT {selects} FROM {self._view}"
-        ).fetchone()
+        row = self._row(f"SELECT {selects} FROM {self._view}")
         out: dict[str, dict[float, float]] = {c: {} for c in columns}
         idx = 0
         for c in columns:
@@ -222,18 +214,19 @@ class DuckDBEngine(Engine):
 
     def duplicate_count(self, subset: list[str] | None = None) -> int:
         cols_sql = _quoted_list(subset or self.columns())
-        result = self._con.execute(
-            f"""
-            WITH counts AS (
-                SELECT {cols_sql}, COUNT(*) AS n
-                FROM {self._view}
-                GROUP BY {cols_sql}
-                HAVING COUNT(*) > 1
+        return int(
+            self._scalar(
+                f"""
+                WITH counts AS (
+                    SELECT {cols_sql}, COUNT(*) AS n
+                    FROM {self._view}
+                    GROUP BY {cols_sql}
+                    HAVING COUNT(*) > 1
+                )
+                SELECT COALESCE(SUM(n), 0) FROM counts
+                """
             )
-            SELECT COALESCE(SUM(n), 0) FROM counts
-            """
-        ).fetchone()
-        return int(result[0])
+        )
 
     def sample_duplicates(
         self,
@@ -252,15 +245,15 @@ class DuckDBEngine(Engine):
             """,
             [n],
         ).fetchdf()
-        return rows.to_dict(orient="records")
+        return cast(list[dict[str, Any]], rows.to_dict(orient="records"))
 
     def count_outside(self, column: str, low: float, high: float) -> int:
         return int(
-            self._con.execute(
+            self._scalar(
                 f"SELECT COUNT(*) FROM {self._view} "
                 f'WHERE "{column}" < ? OR "{column}" > ?',
                 [low, high],
-            ).fetchone()[0]
+            )
         )
 
     def sample_outside(
@@ -271,12 +264,31 @@ class DuckDBEngine(Engine):
             f'WHERE "{column}" < ? OR "{column}" > ? LIMIT ?',
             [low, high, n],
         ).fetchdf()
-        return rows.to_dict(orient="records")
+        return cast(list[dict[str, Any]], rows.to_dict(orient="records"))
 
     def max_datetime(self, column: str) -> Any:
-        return self._con.execute(
-            f'SELECT MAX("{column}") FROM {self._view}'
-        ).fetchone()[0]
+        return self._scalar(f'SELECT MAX("{column}") FROM {self._view}')
+
+    # ---- internals -----------------------------------------------------
+
+    def _row(
+        self,
+        sql: str,
+        params: list[Any] | None = None,
+    ) -> tuple[Any, ...]:
+        """Run a query expected to return exactly one row, non-None."""
+        cursor = (
+            self._con.execute(sql, params)
+            if params is not None
+            else self._con.execute(sql)
+        )
+        result = cursor.fetchone()
+        if not isinstance(result, tuple):
+            raise RuntimeError(f"duckdb returned no row for: {sql!r}")
+        return result
+
+    def _scalar(self, sql: str, params: list[Any] | None = None) -> Any:
+        return self._row(sql, params)[0]
 
 
 def _quoted_list(cols: list[str]) -> str:

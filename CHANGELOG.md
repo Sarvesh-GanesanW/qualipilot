@@ -11,6 +11,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Lowered `Development Status` classifier from `5 - Production/Stable` to
   `4 - Beta`. Several engines (Spark, Dask, DuckDB) and the Lambda handler
   ship without test coverage; the previous classifier overpromised.
+- `qualipilot.linking.em.estimate_parameters` now returns a typed
+  `EMParams` (TypedDict). Callers that unpacked `params["m"]` etc. as
+  the old `dict[str, np.ndarray | float]` keep working — the keys are
+  identical — but they now get proper static types at use sites.
+- `Check._execute` abstract return type narrowed from `tuple[str, dict]`
+  to `tuple[Severity, dict]`. Subclasses now annotate severity
+  explicitly; mypy catches accidental returns of bogus severity strings.
 
 ### Added
 - `python -m qualipilot` entry point (`__main__.py`).
@@ -22,6 +29,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CI test job now installs `linking` and `duckdb` extras; previously
   `tests/test_linking.py` imported `rapidfuzz` unconditionally and the
   whole matrix red-failed on a `ModuleNotFoundError`.
+- 35 `mypy --strict` errors across `engines/duckdb_engine`,
+  `linking/em`, `linking/linker`, `linking/duckdb_linker`,
+  `engines/{pandas,dask,cudf}_engine`, `checks/{base,missing}`,
+  `llm/bedrock`, `logging_setup`, `lakehouse`, and `cli`. The package
+  now type-checks cleanly under strict mode, matching its
+  `Typing :: Typed` classifier and `py.typed` marker.
 
 ## [2.0.0] — 2026-04-27
 

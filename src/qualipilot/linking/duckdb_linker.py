@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 import polars as pl
@@ -35,7 +35,9 @@ from qualipilot.linking.linker import LinkageResult
 logger = logging.getLogger(__name__)
 
 
-def run_duckdb_linker(df: pl.DataFrame, config: LinkConfig) -> LinkageResult:
+def run_duckdb_linker(  # noqa: PLR0915
+    df: pl.DataFrame, config: LinkConfig
+) -> LinkageResult:
     """Run the linker end-to-end with DuckDB as the compute engine."""
     import duckdb
 
@@ -82,7 +84,10 @@ def run_duckdb_linker(df: pl.DataFrame, config: LinkConfig) -> LinkageResult:
     con.execute(query)
     timings["blocking_compare_ms"] = _ms_since(t0)
 
-    n_pairs_quick = con.execute("SELECT COUNT(*) FROM pairs").fetchone()[0]
+    count_row = con.execute("SELECT COUNT(*) FROM pairs").fetchone()
+    if count_row is None:
+        raise RuntimeError("duckdb COUNT returned no row")
+    n_pairs_quick = count_row[0]
     if n_pairs_quick > config.max_pairs_hard_cap:
         raise MemoryError(
             f"duckdb blocking produced {n_pairs_quick:,} pairs; "
@@ -98,7 +103,7 @@ def run_duckdb_linker(df: pl.DataFrame, config: LinkConfig) -> LinkageResult:
     n_pairs = pair_df.num_rows
     if n_pairs == 0:
         return LinkageResult(
-            pairs=pl.from_arrow(pair_df),
+            pairs=cast(pl.DataFrame, pl.from_arrow(pair_df)),
             clusters={},
             parameters={"lambda": 0.0, "threshold": 0.0},
             timings_ms=timings,
@@ -142,7 +147,7 @@ def run_duckdb_linker(df: pl.DataFrame, config: LinkConfig) -> LinkageResult:
     probs = score_pairs(levels, params["m"], params["u"], params["lambda"])
     timings["score_ms"] = _ms_since(t0)
 
-    scored = pl.from_arrow(pair_df).with_columns(
+    scored = cast(pl.DataFrame, pl.from_arrow(pair_df)).with_columns(
         pl.Series("match_probability", probs.astype(np.float64))
     )
 

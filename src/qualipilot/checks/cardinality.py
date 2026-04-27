@@ -10,12 +10,13 @@ from __future__ import annotations
 from typing import Any
 
 from qualipilot.checks.base import Check, CheckContext
+from qualipilot.models.results import Severity
 
 
 class CardinalityCheck(Check):
     name = "cardinality"
 
-    def _execute(self, ctx: CheckContext) -> tuple[str, dict[str, Any]]:
+    def _execute(self, ctx: CheckContext) -> tuple[Severity, dict[str, Any]]:
         total_rows = ctx.engine.row_count() or 1
         report: list[dict[str, Any]] = []
         any_constant = False
@@ -38,5 +39,5 @@ class CardinalityCheck(Check):
                 }
             )
 
-        severity = "warn" if any_constant else "ok"
+        severity: Severity = "warn" if any_constant else "ok"
         return severity, {"per_column": report}

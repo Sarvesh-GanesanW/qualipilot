@@ -7,7 +7,7 @@ so a single check does not trigger multiple full scans.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pandas as pd
 
@@ -125,7 +125,10 @@ class DaskEngine(Engine):
     ) -> list[dict[str, Any]]:
         base = self._df if subset is None else self._df[subset]
         mask = base.duplicated(keep=False)
-        return self._df[mask].head(n, compute=True).to_dict(orient="records")
+        return cast(
+            list[dict[str, Any]],
+            self._df[mask].head(n, compute=True).to_dict(orient="records"),
+        )
 
     def count_outside(
         self,
@@ -145,7 +148,10 @@ class DaskEngine(Engine):
     ) -> list[dict[str, Any]]:
         series = self._df[column]
         mask = (series < low) | (series > high)
-        return self._df[mask].head(n, compute=True).to_dict(orient="records")
+        return cast(
+            list[dict[str, Any]],
+            self._df[mask].head(n, compute=True).to_dict(orient="records"),
+        )
 
     def max_datetime(self, column: str) -> Any:
         val = self._df[column].max().compute()

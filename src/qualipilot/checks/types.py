@@ -11,12 +11,13 @@ from collections import Counter
 from typing import Any
 
 from qualipilot.checks.base import Check, CheckContext
+from qualipilot.models.results import Severity
 
 
 class DataTypesCheck(Check):
     name = "data_types"
 
-    def _execute(self, ctx: CheckContext) -> tuple[str, dict[str, Any]]:
+    def _execute(self, ctx: CheckContext) -> tuple[Severity, dict[str, Any]]:
         dtypes = ctx.engine.dtypes()
         rollup = Counter(dtypes.values())
         return "ok", {

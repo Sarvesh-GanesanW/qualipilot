@@ -10,14 +10,23 @@ from __future__ import annotations
 from typing import Any
 
 from qualipilot.checks.base import Check, CheckContext
+from qualipilot.models.results import Severity
 
 
 class MissingValuesCheck(Check):
     name = "missing_values"
 
-    def _execute(self, ctx: CheckContext) -> tuple[str, dict[str, Any]]:
+    def _execute(self, ctx: CheckContext) -> tuple[Severity, dict[str, Any]]:
         nulls = ctx.engine.null_counts()
         total_rows = ctx.engine.row_count() or 1
+        total_nulls = sum(int(c) for c in nulls.values())
+        worst = round(
+            max(
+                ((int(c) / total_rows) * 100 for c in nulls.values()),
+                default=0.0,
+            ),
+            4,
+        )
         stats = [
             {
                 "column": col,
@@ -27,10 +36,7 @@ class MissingValuesCheck(Check):
             for col, count in nulls.items()
         ]
 
-        total_nulls = sum(s["null_count"] for s in stats)
-        worst = max((s["null_percentage"] for s in stats), default=0.0)
-
-        severity = "ok"
+        severity: Severity = "ok"
         if worst > 50:
             severity = "error"
         elif total_nulls > 0:

@@ -8,12 +8,12 @@ replacement at the API level.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from qualipilot.engines.base import Engine
 
 try:
-    import cudf  # type: ignore[import-not-found]
+    import cudf
 except ImportError as exc:  # pragma: no cover
     raise ImportError(
         "cudf is not installed; install RAPIDS "
@@ -116,7 +116,10 @@ class CudfEngine(Engine):
     ) -> list[dict[str, Any]]:
         base = self._df if subset is None else self._df[subset]
         mask = base.duplicated(keep=False)
-        return self._df[mask].head(n).to_pandas().to_dict(orient="records")
+        return cast(
+            list[dict[str, Any]],
+            self._df[mask].head(n).to_pandas().to_dict(orient="records"),
+        )
 
     def count_outside(
         self,
@@ -136,7 +139,10 @@ class CudfEngine(Engine):
     ) -> list[dict[str, Any]]:
         series = self._df[column]
         mask = (series < low) | (series > high)
-        return self._df[mask].head(n).to_pandas().to_dict(orient="records")
+        return cast(
+            list[dict[str, Any]],
+            self._df[mask].head(n).to_pandas().to_dict(orient="records"),
+        )
 
     def max_datetime(self, column: str) -> Any:
         val = self._df[column].max()

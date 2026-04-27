@@ -18,12 +18,19 @@ typical 3-5 comparison columns we expect in practice.
 from __future__ import annotations
 
 import logging
+from typing import TypedDict, cast
 
 import numpy as np
 
 logger = logging.getLogger(__name__)
 
 _TINY = 1e-12
+
+
+EMParams = TypedDict(
+    "EMParams",
+    {"m": np.ndarray, "u": np.ndarray, "lambda": float},
+)
 
 
 def estimate_parameters(
@@ -33,7 +40,7 @@ def estimate_parameters(
     prior: float,
     max_iter: int = 25,
     tol: float = 1e-4,
-) -> dict[str, np.ndarray | float]:
+) -> EMParams:
     """Return learned ``m``, ``u`` and ``lambda`` via EM.
 
     Args:
@@ -134,7 +141,7 @@ def estimate_parameters(
     else:
         logger.info("em stopped at max_iter=%d (lambda=%.6f)", max_iter, lam)
 
-    return {"m": m, "u": u, "lambda": lam}
+    return cast(EMParams, {"m": m, "u": u, "lambda": lam})
 
 
 def score_pairs(
@@ -161,7 +168,7 @@ def score_pairs(
         np.exp(num - max_ab, dtype=np.float32)
         + np.exp(den_other - max_ab, dtype=np.float32)
     )
-    return np.exp(num - log_denom, dtype=np.float32)
+    return cast(np.ndarray, np.exp(num - log_denom, dtype=np.float32))
 
 
 def _initialise(
@@ -209,4 +216,4 @@ def _build_level_mask(
 
 def _renormalise(arr: np.ndarray) -> np.ndarray:
     totals = arr.sum(axis=1, keepdims=True) + _TINY
-    return arr / totals
+    return cast(np.ndarray, arr / totals)

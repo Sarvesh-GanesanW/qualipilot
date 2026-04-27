@@ -109,7 +109,7 @@ def load_delta(path: str) -> Any:
 
     Requires ``pip install deltalake``.
     """
-    import deltalake  # type: ignore[import-not-found]
+    import deltalake
     import polars as pl
 
     dt = deltalake.DeltaTable(path)
