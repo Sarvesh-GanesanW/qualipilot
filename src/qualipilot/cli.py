@@ -68,21 +68,37 @@ app = typer.Typer(
     help="Run data quality checks and (optionally) an LLM report.",
     no_args_is_help=True,
     add_completion=False,
+    pretty_exceptions_enable=False,
 )
 
 console = Console()
+
+
+def _version_callback(value: bool) -> None:
+    if value:
+        console.print(f"qualipilot {__version__}")
+        raise typer.Exit
 
 
 @app.callback()
 def _root(
     log_level: Annotated[
         str, typer.Option("--log-level", envvar="QUALIPILOT_LOG_LEVEL")
-    ] = "INFO",
+    ] = "WARNING",
     json_logs: Annotated[
         bool,
         typer.Option(
             "--json-logs/--rich-logs",
             envvar="QUALIPILOT_JSON_LOGS",
+        ),
+    ] = False,
+    version: Annotated[
+        bool,
+        typer.Option(
+            "--version",
+            callback=_version_callback,
+            is_eager=True,
+            help="Show the installed version and exit.",
         ),
     ] = False,
 ) -> None:
@@ -146,12 +162,22 @@ def check(
         LLMChoice,
         typer.Option(
             "--llm",
-            help="LLM provider for the narrative report.",
+            help=(
+                "LLM provider for the narrative report. With anything "
+                "other than 'none' you will usually also want --model."
+            ),
         ),
     ] = LLMChoice.none,
     llm_model: Annotated[
         str,
-        typer.Option("--model", help="Model id/name for the chosen LLM."),
+        typer.Option(
+            "--model",
+            help=(
+                "Model id/name for the chosen LLM. "
+                "Bedrock default is provider.model-3-5-haiku-... "
+                "Ollama default depends on what you have pulled."
+            ),
+        ),
     ] = "",
     bedrock_region: Annotated[
         str,
@@ -184,7 +210,7 @@ def check(
         ),
     ] = SeverityChoice.error,
 ) -> None:
-    """Run data quality checks over ``input_path``."""
+    """Run data quality checks against a CSV/Parquet/JSON/NDJSON file."""
     cfg = _build_config(
         config=config,
         engine=engine,
@@ -454,9 +480,23 @@ def _read_any(path: Path) -> pl.DataFrame:
     raise typer.BadParameter(f"unsupported file type: {suffix}")
 
 
-if __name__ == "__main__":  # pragma: no cover
+def _run() -> None:  # pragma: no cover
+    """Entry point with friendly rendering of optional-dependency errors.
+
+    Without this wrapper, missing extras (e.g. running ``qualipilot link``
+    without ``[linking]``) surface as a 50-line Rich traceback. The actual
+    install command is in the ImportError message itself; we pull it out
+    and exit cleanly so users see one line, not a stack. ``escape`` keeps
+    ``[bedrock]`` / ``[linking]`` from being parsed as Rich style markup.
+    """
+    from rich.markup import escape
+
     try:
         app()
-    except Exception as exc:
-        console.print(f"[red]error:[/] {exc}")
+    except ImportError as exc:
+        console.print(f"[red]error:[/] {escape(str(exc))}")
         sys.exit(2)
+
+
+if __name__ == "__main__":  # pragma: no cover
+    _run()

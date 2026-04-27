@@ -105,7 +105,13 @@ class FuzzyString(_BaseComparison):
 
     def assign_levels(self, pairs: pl.DataFrame) -> np.ndarray:
         # tight C loop via rapidfuzz; no python-per-char work
-        from rapidfuzz.distance import JaroWinkler
+        try:
+            from rapidfuzz.distance import JaroWinkler
+        except ImportError as exc:
+            raise ImportError(
+                "rapidfuzz is required for fuzzy linking; "
+                "install with `pip install qualipilot[linking]`"
+            ) from exc
 
         left = pairs[self.left_col()].to_list()
         right = pairs[self.right_col()].to_list()

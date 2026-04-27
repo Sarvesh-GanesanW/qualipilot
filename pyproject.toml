@@ -86,7 +86,7 @@ Repository = "https://github.com/Sarvesh-GanesanW/dataqualitychecker"
 Issues = "https://github.com/Sarvesh-GanesanW/dataqualitychecker/issues"
 
 [project.scripts]
-qualipilot = "qualipilot.cli:app"
+qualipilot = "qualipilot.cli:_run"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/qualipilot"]

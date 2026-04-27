@@ -20,6 +20,13 @@ def test_version() -> None:
     assert "qualipilot" in result.stdout
 
 
+def test_version_flag() -> None:
+    """Both `qualipilot --version` and `qualipilot version` should work."""
+    result = runner.invoke(app, ["--version"])
+    assert result.exit_code == 0
+    assert "qualipilot" in result.stdout
+
+
 def test_invalid_engine_rejected() -> None:
     """Typer's Choice validation should reject typos before any work runs."""
     result = runner.invoke(
