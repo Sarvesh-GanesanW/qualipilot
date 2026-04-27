@@ -4,14 +4,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from datapilot import DataQualityChecker, DatapilotConfig
-from datapilot.models.config import CheckConfig, ColumnRange
+from qualipilot import DataQualityChecker, QualipilotConfig
+from qualipilot.models.config import CheckConfig, ColumnRange
 
 SAMPLE = Path(__file__).parent / "sample.csv"
 
 
 def main() -> None:
-    config = DatapilotConfig(
+    config = QualipilotConfig(
         engine="polars",
         checks=CheckConfig(
             column_ranges={

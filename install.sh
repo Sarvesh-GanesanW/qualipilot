@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One-click installer for datapilot on macOS/Linux.
+# One-click installer for qualipilot on macOS/Linux.
 #
 # usage:
 #     ./install.sh                # core only
@@ -71,4 +71,4 @@ echo
 echo "installed. activate your shell with:"
 echo "    source ${VENV_DIR}/bin/activate"
 echo "then try:"
-echo "    datapilot --help"
+echo "    qualipilot --help"

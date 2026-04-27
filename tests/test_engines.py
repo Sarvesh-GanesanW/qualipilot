@@ -5,7 +5,7 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from datapilot.engines import PandasEngine, PolarsEngine, build_engine
+from qualipilot.engines import PandasEngine, PolarsEngine, build_engine
 
 
 @pytest.mark.parametrize(

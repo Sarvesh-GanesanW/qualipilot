@@ -6,14 +6,14 @@ from pathlib import Path
 
 import pandas as pd
 
-from datapilot import DatapilotConfig, DataQualityChecker
-from datapilot.models.config import CheckConfig, ColumnRange
+from qualipilot import DataQualityChecker, QualipilotConfig
+from qualipilot.models.config import CheckConfig, ColumnRange
 
 
 def test_full_run_produces_all_sections(
     dirty_pandas: pd.DataFrame,
 ) -> None:
-    cfg = DatapilotConfig(
+    cfg = QualipilotConfig(
         checks=CheckConfig(
             column_ranges={"amount": ColumnRange(min=0, max=100)}
         )
@@ -33,19 +33,19 @@ def test_full_run_produces_all_sections(
 
 
 def test_save_writes_json(tmp_path: Path, dirty_pandas: pd.DataFrame) -> None:
-    cfg = DatapilotConfig(output_path=tmp_path / "out.json")
+    cfg = QualipilotConfig(output_path=tmp_path / "out.json")
     DataQualityChecker(dirty_pandas, cfg).run()
     assert (tmp_path / "out.json").exists()
 
 
 def test_engine_override(dirty_pandas: pd.DataFrame) -> None:
-    cfg = DatapilotConfig(engine="pandas")
+    cfg = QualipilotConfig(engine="pandas")
     report = DataQualityChecker(dirty_pandas, cfg).run()
     assert report.dataset.engine == "pandas"
 
 
 def test_exit_severity_helpers(dirty_pandas: pd.DataFrame) -> None:
-    cfg = DatapilotConfig(
+    cfg = QualipilotConfig(
         checks=CheckConfig(
             column_ranges={"amount": ColumnRange(min=0, max=100)}
         )

@@ -8,14 +8,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from datapilot import DataQualityChecker, DatapilotConfig
-from datapilot.models.config import LLMConfig
+from qualipilot import DataQualityChecker, QualipilotConfig
+from qualipilot.models.config import LLMConfig
 
 SAMPLE = Path(__file__).parent / "sample.csv"
 
 
 def main() -> None:
-    config = DatapilotConfig(
+    config = QualipilotConfig(
         engine="polars",
         llm=LLMConfig(
             provider="ollama",

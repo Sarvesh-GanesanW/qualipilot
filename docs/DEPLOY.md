@@ -8,7 +8,7 @@ them.
 
 ```bash
 ./install.sh --bedrock   # or --ollama / --all / --dev
-datapilot check data.csv --llm bedrock --model provider.model-3-5-haiku-20241022-v1:0
+qualipilot check data.csv --llm bedrock --model provider.model-3-5-haiku-20241022-v1:0
 ```
 
 Credentials come from the standard AWS chain — env vars, shared
@@ -19,9 +19,9 @@ to pick a named profile explicitly.
 
 ```bash
 # single image, bedrock extras baked in
-docker build -f docker/Dockerfile -t datapilot:latest .
+docker build -f docker/Dockerfile -t qualipilot:latest .
 docker run --rm -v $PWD/data:/data -v $PWD/reports:/reports \
-    datapilot:latest check /data/input.csv \
+    qualipilot:latest check /data/input.csv \
     --output /reports/report.html
 
 # full stack with an ollama sidecar
@@ -31,7 +31,7 @@ docker compose -f docker/docker-compose.yml up --build
 The compose stack:
 
 * brings up `ollama` on `:11434`
-* builds `datapilot:latest` with the bedrock extra
+* builds `qualipilot:latest` with the bedrock extra
 * wires ollama into the container at `http://ollama:11434`
 * mounts the host `~/.aws` directory read-only so `--llm bedrock`
   works too
@@ -42,7 +42,7 @@ The compose stack:
 cd deploy/terraform
 terraform init
 terraform apply \
-    -var project=datapilot \
+    -var project=qualipilot \
     -var region=us-east-1 \
     -var aws_profile=sre-tea
 ```
@@ -61,18 +61,18 @@ Push the image:
 ECR_URL=$(terraform output -raw ecr_repository_url)
 aws ecr get-login-password | docker login --username AWS --password-stdin "${ECR_URL%/*}"
 
-docker build -f ../../docker/Dockerfile.lambda -t datapilot-lambda:latest ../..
-docker tag datapilot-lambda:latest "${ECR_URL}:latest"
+docker build -f ../../docker/Dockerfile.lambda -t qualipilot-lambda:latest ../..
+docker tag qualipilot-lambda:latest "${ECR_URL}:latest"
 docker push "${ECR_URL}:latest"
 
-aws lambda update-function-code --function-name datapilot --image-uri "${ECR_URL}:latest"
+aws lambda update-function-code --function-name qualipilot --image-uri "${ECR_URL}:latest"
 ```
 
 Invoke:
 
 ```bash
 aws lambda invoke \
-    --function-name datapilot \
+    --function-name qualipilot \
     --payload '{"s3_uri":"s3://my-bucket/orders.parquet"}' \
     response.json
 ```
@@ -88,13 +88,13 @@ degrades. Example (cron daily 09:00 UTC):
 
 ```hcl
 resource "aws_cloudwatch_event_rule" "daily" {
-  name                = "datapilot-daily"
+  name                = "qualipilot-daily"
   schedule_expression = "cron(0 9 * * ? *)"
 }
 
 resource "aws_cloudwatch_event_target" "daily" {
   rule      = aws_cloudwatch_event_rule.daily.name
-  target_id = "datapilot"
+  target_id = "qualipilot"
   arn       = aws_lambda_function.checker.arn
   input     = jsonencode({ s3_uri = "s3://my-bucket/orders.parquet" })
 }
@@ -110,7 +110,7 @@ resource "aws_lambda_permission" "events" {
 
 ## Observability
 
-* Set `DATAPILOT_JSON_LOGS=1` — the logging module emits one JSON
+* Set `QUALIPILOT_JSON_LOGS=1` — the logging module emits one JSON
   line per record, which CloudWatch Logs Insights parses natively.
 * Bedrock usage is logged at INFO per request: model id, input /
   output / total tokens. Aggregate those in a metric filter for a

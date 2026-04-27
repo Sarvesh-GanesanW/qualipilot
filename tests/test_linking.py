@@ -6,7 +6,7 @@ import numpy as np
 import polars as pl
 import pytest
 
-from datapilot.linking import (
+from qualipilot.linking import (
     ExactMatch,
     FuzzyString,
     LinkConfig,

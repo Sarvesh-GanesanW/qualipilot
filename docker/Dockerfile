@@ -23,23 +23,23 @@ FROM python:3.12-slim AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    DATAPILOT_JSON_LOGS=1
+    QUALIPILOT_JSON_LOGS=1
 
-RUN groupadd --system --gid 1000 datapilot \
-    && useradd  --system --uid 1000 --gid datapilot datapilot \
+RUN groupadd --system --gid 1000 qualipilot \
+    && useradd  --system --uid 1000 --gid qualipilot qualipilot \
     && mkdir /data /reports \
-    && chown datapilot:datapilot /data /reports
+    && chown qualipilot:qualipilot /data /reports
 
 COPY --from=builder /usr/local/lib/python3.12/site-packages \
      /usr/local/lib/python3.12/site-packages
-COPY --from=builder /usr/local/bin/datapilot /usr/local/bin/datapilot
+COPY --from=builder /usr/local/bin/qualipilot /usr/local/bin/qualipilot
 
-USER datapilot
+USER qualipilot
 WORKDIR /work
 
 # workspace layout is opinionated: mount inputs on /data, reports land
 # in /reports, so compose files stay simple
 VOLUME ["/data", "/reports"]
 
-ENTRYPOINT ["datapilot"]
+ENTRYPOINT ["qualipilot"]
 CMD ["--help"]

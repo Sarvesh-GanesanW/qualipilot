@@ -1,5 +1,5 @@
-# Production-grade Lambda + S3 + IAM scaffold for datapilot.
-# terraform init && terraform apply -var project=datapilot
+# Production-grade Lambda + S3 + IAM scaffold for qualipilot.
+# terraform init && terraform apply -var project=qualipilot
 
 terraform {
   required_version = ">= 1.5"
@@ -140,8 +140,8 @@ resource "aws_lambda_function" "checker" {
 
   environment {
     variables = {
-      DATAPILOT_JSON_LOGS = "1"
-      DATAPILOT_LOG_LEVEL = "INFO"
+      QUALIPILOT_JSON_LOGS = "1"
+      QUALIPILOT_LOG_LEVEL = "INFO"
     }
   }
 
