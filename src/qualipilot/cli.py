@@ -67,11 +67,18 @@ app = typer.Typer(
     name="qualipilot",
     help="Run data quality checks and (optionally) an LLM report.",
     no_args_is_help=True,
-    add_completion=False,
+    add_completion=True,
     pretty_exceptions_enable=False,
 )
 
 console = Console()
+
+CONFIG_FILENAMES = (
+    "qualipilot.yaml",
+    "qualipilot.yml",
+    ".qualipilot.yaml",
+    ".qualipilot.yml",
+)
 
 
 def _version_callback(value: bool) -> None:
@@ -80,11 +87,37 @@ def _version_callback(value: bool) -> None:
         raise typer.Exit
 
 
+def _autodiscover_config() -> Path | None:
+    """Return the first qualipilot config found in cwd, else None."""
+    cwd = Path.cwd()
+    for name in CONFIG_FILENAMES:
+        candidate = cwd / name
+        if candidate.exists():
+            return candidate
+    return None
+
+
 @app.callback()
 def _root(
     log_level: Annotated[
         str, typer.Option("--log-level", envvar="QUALIPILOT_LOG_LEVEL")
     ] = "WARNING",
+    quiet: Annotated[
+        bool,
+        typer.Option(
+            "--quiet",
+            "-q",
+            help="Only show errors. Equivalent to --log-level ERROR.",
+        ),
+    ] = False,
+    verbose: Annotated[
+        bool,
+        typer.Option(
+            "--verbose",
+            "-v",
+            help="Show INFO logs. Equivalent to --log-level INFO.",
+        ),
+    ] = False,
     json_logs: Annotated[
         bool,
         typer.Option(
@@ -103,6 +136,14 @@ def _root(
     ] = False,
 ) -> None:
     """Global options that apply to every sub-command."""
+    if quiet and verbose:
+        raise typer.BadParameter(
+            "--quiet and --verbose are mutually exclusive"
+        )
+    if quiet:
+        log_level = "ERROR"
+    elif verbose:
+        log_level = "INFO"
     configure_logging(level=log_level, json_logs=json_logs)
 
 
@@ -250,7 +291,19 @@ def _build_config(
     api_key: str | None,
     range_spec: list[str] | None,
 ) -> QualipilotConfig:
-    """Merge CLI flags on top of a YAML/JSON base config if supplied."""
+    """Merge CLI flags on top of a YAML/JSON base config if supplied.
+
+    If ``config`` is None we look for ``qualipilot.{yaml,yml}`` or
+    ``.qualipilot.{yaml,yml}`` in the current directory and use that.
+    Pass ``--config /dev/null`` (or any other empty file) to force
+    defaults.
+    """
+    if config is None:
+        config = _autodiscover_config()
+        if config is not None:
+            console.print(
+                f"[dim]using config from {config}[/dim]",
+            )
     cfg = QualipilotConfig.from_file(config) if config else QualipilotConfig()
 
     # cli flags win over file/env unless flag is still at its default
