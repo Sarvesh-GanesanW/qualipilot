@@ -31,6 +31,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `LLMConfig` now carries a per-provider temperature validator. Setting
   `provider="bedrock"` with `temperature > 1.0` raises at config time;
   Bedrock would otherwise 400 mid-run.
+- Test suite for `qualipilot.engines.duckdb_engine` (was 0% covered,
+  now 87%). Includes parity tests against polars/pandas for null counts,
+  duplicates, quantiles, `count_outside`; from-CSV round-trip; isolation
+  test for two engines in the same process.
+
+### Fixed
+- `DuckDBEngine.from_any` no longer crashes on file paths. Previously
+  it passed the path as a `?` parameter to `read_csv_auto` /
+  `read_parquet` / `read_json_auto`; DuckDB rejects parameters in those
+  table-function slots with "Unexpected prepared parameter". The fix
+  inlines the path with single-quote escaping to keep the call
+  injection-safe.
 
 ### Added
 - `python -m qualipilot` entry point (`__main__.py`).

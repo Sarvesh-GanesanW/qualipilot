@@ -51,20 +51,24 @@ class DuckDBEngine(Engine):
         if isinstance(data, (str, Path)):
             path = Path(data)
             suffix = path.suffix.lower()
+            # duckdb's read_*_auto table functions reject ? parameters,
+            # so we inline the path. Single quotes are escaped to keep
+            # this SQL-injection-safe for filesystem paths.
+            literal = str(path).replace("'", "''")
             if suffix == ".csv":
                 con.execute(
-                    f"CREATE VIEW {view} AS SELECT * FROM read_csv_auto(?)",
-                    [str(path)],
+                    f"CREATE VIEW {view} AS "
+                    f"SELECT * FROM read_csv_auto('{literal}')"
                 )
             elif suffix in {".parquet", ".pq"}:
                 con.execute(
-                    f"CREATE VIEW {view} AS SELECT * FROM read_parquet(?)",
-                    [str(path)],
+                    f"CREATE VIEW {view} AS "
+                    f"SELECT * FROM read_parquet('{literal}')"
                 )
             elif suffix in {".ndjson", ".jsonl", ".json"}:
                 con.execute(
-                    f"CREATE VIEW {view} AS SELECT * FROM read_json_auto(?)",
-                    [str(path)],
+                    f"CREATE VIEW {view} AS "
+                    f"SELECT * FROM read_json_auto('{literal}')"
                 )
             else:
                 raise ValueError(f"unsupported file type: {suffix}")
