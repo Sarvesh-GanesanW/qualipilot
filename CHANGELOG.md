@@ -43,6 +43,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   table-function slots with "Unexpected prepared parameter". The fix
   inlines the path with single-quote escaping to keep the call
   injection-safe.
+- Missing optional dependencies no longer dump a 50-line Rich
+  traceback. `qualipilot link` without `[linking]` and
+  `qualipilot check --llm bedrock` without `[bedrock]` now show a
+  one-line `error: <msg>` and exit 2. The fix wraps `app()` in a `_run`
+  entry point that catches `ImportError`, escapes Rich markup so
+  ``[linking]`` / ``[bedrock]`` survive intact, and disables Typer's
+  pretty-exception rendering for genuine optional-dep failures.
+- `qualipilot --version` now works (was `version` subcommand only).
+- CLI default log level is `WARNING` (was `INFO`). Old behaviour is one
+  flag away: `--log-level INFO`. Removes the wall of "running check:
+  ..." log lines new users used to see before the summary table.
+- The fuzzy linker raised a bare `ModuleNotFoundError: rapidfuzz`
+  inside a deep call stack when `[linking]` wasn't installed; it now
+  raises the same friendly `ImportError("install with ...[linking]")`
+  message we already use for boto3, dask, duckdb, etc.
+
+### Changed
+- `--llm` / `--model` help text now points users at sensible defaults
+  per provider, and warns that `--model` is usually required when
+  `--llm != none`.
+- `check` subcommand docstring switched from RST backticks to plain
+  prose so `--help` doesn't render literal `` ``input_path`` `` markers.
 
 ### Added
 - `python -m qualipilot` entry point (`__main__.py`).
