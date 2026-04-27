@@ -51,6 +51,35 @@ def test_non_bedrock_accepts_high_temperature() -> None:
     assert cfg.temperature == 1.5
 
 
+def test_quiet_and_verbose_mutually_exclusive(tmp_csv: Path) -> None:
+    result = runner.invoke(
+        app,
+        ["--quiet", "--verbose", "check", str(tmp_csv)],
+    )
+    assert result.exit_code != 0
+    combined = result.stdout + (result.stderr or "")
+    assert "mutually exclusive" in combined
+
+
+def test_config_autodiscovery(
+    tmp_path: Path, tmp_csv: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Running from a dir with qualipilot.yaml uses it without -c."""
+    cfg_path = tmp_path / "qualipilot.yaml"
+    cfg_path.write_text(
+        "engine: pandas\nchecks:\n  outliers: false\n",
+        encoding="utf-8",
+    )
+    csv_in_tmp = tmp_path / "data.csv"
+    csv_in_tmp.write_bytes(tmp_csv.read_bytes())
+
+    monkeypatch.chdir(tmp_path)
+    result = runner.invoke(app, ["check", str(csv_in_tmp)])
+    assert result.exit_code in {0, 1}
+    # auto-discovery prints which file it picked up
+    assert "qualipilot.yaml" in result.stdout
+
+
 def test_check_writes_json(tmp_csv: Path, tmp_path: Path) -> None:
     out = tmp_path / "report.json"
     result = runner.invoke(

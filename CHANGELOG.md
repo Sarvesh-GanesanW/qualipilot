@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `qualipilot.{yaml,yml}` and `.qualipilot.{yaml,yml}` are now
+  auto-discovered from the current working directory when no `-c`
+  flag is supplied. The chosen file is announced as `using config
+  from <path>` so users can see what's loaded. Pass `-c` to override.
+- Global `--quiet` / `-q` (sets log level to ERROR) and `--verbose`
+  / `-v` (sets log level to INFO) flags. Passing both errors out
+  with a clean Typer message.
+- Shell completion is now opt-in via `qualipilot --install-completion`
+  (Typer-provided). Previously the package set
+  `add_completion=False` and hid these knobs.
+
 ## [2.0.1] — 2026-04-28
 
 A maintenance release. No breaking API changes; the runtime behaviour
