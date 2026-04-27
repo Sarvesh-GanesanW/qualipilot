@@ -58,6 +58,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   inside a deep call stack when `[linking]` wasn't installed; it now
   raises the same friendly `ImportError("install with ...[linking]")`
   message we already use for boto3, dask, duckdb, etc.
+- `RangesCheck` now `warns` (not `ok`) when a configured range targets
+  a non-numeric column or a column missing from the dataset. Previously
+  these silently produced 0 violations and got masked under `severity:
+  ok`, hiding YAML typos like `column: status` with `[min: 0, max: 5]`.
 
 ### Changed
 - `--llm` / `--model` help text now points users at sensible defaults

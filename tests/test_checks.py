@@ -87,6 +87,31 @@ def test_ranges_ok_when_not_configured(
     assert result.severity == "ok"
 
 
+def test_ranges_warns_on_non_numeric_column(
+    dirty_pandas: pd.DataFrame,
+) -> None:
+    """Range constraint on a string column was silently ok before."""
+    cfg = CheckConfig(
+        column_ranges={"category": ColumnRange(min=0, max=10)},
+    )
+    result = RangesCheck().run(_ctx(dirty_pandas, cfg))
+    assert result.severity == "warn"
+    note = result.payload["per_column"][0]["note"]
+    assert "non-numeric" in note
+
+
+def test_ranges_warns_on_missing_column(
+    dirty_pandas: pd.DataFrame,
+) -> None:
+    """Configured column not present in dataset must surface as warn."""
+    cfg = CheckConfig(
+        column_ranges={"made_up": ColumnRange(min=0, max=10)},
+    )
+    result = RangesCheck().run(_ctx(dirty_pandas, cfg))
+    assert result.severity == "warn"
+    assert "not present" in result.payload["per_column"][0]["note"]
+
+
 def test_cardinality_detects_constant_column() -> None:
     df = pd.DataFrame({"a": [1] * 10, "b": range(10)})
     result = CardinalityCheck().run(_ctx(df))
