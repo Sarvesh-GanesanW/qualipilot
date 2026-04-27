@@ -5,9 +5,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 from qualipilot.cli import app
+from qualipilot.models.config import LLMConfig
 
 runner = CliRunner()
 
@@ -16,6 +18,30 @@ def test_version() -> None:
     result = runner.invoke(app, ["version"])
     assert result.exit_code == 0
     assert "qualipilot" in result.stdout
+
+
+def test_invalid_engine_rejected() -> None:
+    """Typer's Choice validation should reject typos before any work runs."""
+    result = runner.invoke(
+        app,
+        ["check", "tests/conftest.py", "--engine", "polrs"],
+    )
+    assert result.exit_code != 0
+    combined = result.stdout + (result.stderr or "")
+    assert "polrs" in combined or "Invalid value" in combined
+
+
+def test_bedrock_rejects_high_temperature() -> None:
+    """Bedrock cannot accept temperature > 1.0; config should fail fast."""
+    pattern = r"bedrock temperature must be <= 1\.0"
+    with pytest.raises(ValueError, match=pattern):
+        LLMConfig(provider="bedrock", temperature=1.5)
+
+
+def test_non_bedrock_accepts_high_temperature() -> None:
+    """openai-compatible endpoints accept up to 2.0; should not raise."""
+    cfg = LLMConfig(provider="openai", temperature=1.5)
+    assert cfg.temperature == 1.5
 
 
 def test_check_writes_json(tmp_csv: Path, tmp_path: Path) -> None:

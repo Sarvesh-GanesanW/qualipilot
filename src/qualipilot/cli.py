@@ -7,9 +7,10 @@ without editing any Python files.
 
 from __future__ import annotations
 
+import enum
 import sys
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, cast
 
 import polars as pl
 import typer
@@ -21,11 +22,46 @@ from qualipilot.checker import DataQualityChecker
 from qualipilot.logging_setup import configure_logging
 from qualipilot.models.config import (
     ColumnRange,
+    EngineName,
     LLMConfig,
+    LLMProvider,
     QualipilotConfig,
+    ReportFormat,
 )
 from qualipilot.models.results import QualityReport
 from qualipilot.reporting import render_html, render_markdown
+
+
+class EngineChoice(enum.StrEnum):
+    """CLI-accepted engines. Validated by Typer; typos error cleanly."""
+
+    auto = "auto"
+    polars = "polars"
+    pandas = "pandas"
+    duckdb = "duckdb"
+    dask = "dask"
+    cudf = "cudf"
+    spark = "spark"
+
+
+class LLMChoice(enum.StrEnum):
+    none = "none"
+    bedrock = "bedrock"
+    ollama = "ollama"
+    openai = "openai"
+
+
+class FormatChoice(enum.StrEnum):
+    json = "json"
+    html = "html"
+    markdown = "markdown"
+
+
+class SeverityChoice(enum.StrEnum):
+    ok = "ok"
+    warn = "warn"
+    error = "error"
+
 
 app = typer.Typer(
     name="qualipilot",
@@ -81,13 +117,13 @@ def check(
         ),
     ] = None,
     engine: Annotated[
-        str,
+        EngineChoice,
         typer.Option(
             "--engine",
             "-e",
-            help="auto | polars | pandas | dask | cudf",
+            help="Dataframe backend.",
         ),
-    ] = "auto",
+    ] = EngineChoice.auto,
     output: Annotated[
         Path | None,
         typer.Option(
@@ -97,20 +133,22 @@ def check(
         ),
     ] = None,
     report_format: Annotated[
-        str,
+        FormatChoice,
         typer.Option(
             "--format",
             "-f",
-            help="json | html | markdown (derived from --output if omitted).",
+            help=(
+                "Report format. Auto-derived from --output suffix when known."
+            ),
         ),
-    ] = "json",
+    ] = FormatChoice.json,
     llm_provider: Annotated[
-        str,
+        LLMChoice,
         typer.Option(
             "--llm",
-            help="none | bedrock | ollama | openai",
+            help="LLM provider for the narrative report.",
         ),
-    ] = "none",
+    ] = LLMChoice.none,
     llm_model: Annotated[
         str,
         typer.Option("--model", help="Model id/name for the chosen LLM."),
@@ -139,13 +177,12 @@ def check(
         ),
     ] = None,
     fail_on: Annotated[
-        str,
+        SeverityChoice,
         typer.Option(
             "--fail-on",
-            help="Exit non-zero when any check hits this severity "
-            "(ok | warn | error).",
+            help="Exit non-zero when any check hits this severity.",
         ),
-    ] = "error",
+    ] = SeverityChoice.error,
 ) -> None:
     """Run data quality checks over ``input_path``."""
     cfg = _build_config(
@@ -177,9 +214,9 @@ def check(
 def _build_config(
     *,
     config: Path | None,
-    engine: str,
-    report_format: str,
-    llm_provider: str,
+    engine: EngineChoice,
+    report_format: FormatChoice,
+    llm_provider: LLMChoice,
     llm_model: str,
     bedrock_region: str,
     aws_profile: str | None,
@@ -191,14 +228,13 @@ def _build_config(
     cfg = QualipilotConfig.from_file(config) if config else QualipilotConfig()
 
     # cli flags win over file/env unless flag is still at its default
-    if engine != "auto":
-        cfg.engine = engine  # type: ignore[assignment]
-    if report_format:
-        cfg.report_format = report_format  # type: ignore[assignment]
+    if engine is not EngineChoice.auto:
+        cfg.engine = cast(EngineName, engine.value)
+    cfg.report_format = cast(ReportFormat, report_format.value)
 
-    if llm_provider and llm_provider != "none":
+    if llm_provider is not LLMChoice.none:
         cfg.llm = LLMConfig(
-            provider=llm_provider,  # type: ignore[arg-type]
+            provider=cast(LLMProvider, llm_provider.value),
             model=llm_model or cfg.llm.model,
             region=bedrock_region,
             aws_profile=aws_profile,
@@ -276,19 +312,11 @@ def _print_summary(report: QualityReport) -> None:
         console.print(report.llm_report)
 
 
-def _compute_exit_code(report: QualityReport, fail_on: str) -> int:
+def _compute_exit_code(report: QualityReport, fail_on: SeverityChoice) -> int:
     order = {"ok": 0, "warn": 1, "error": 2}
-    if fail_on not in order:
-        raise typer.BadParameter(
-            f"--fail-on must be one of ok/warn/error, got {fail_on!r}"
-        )
-    threshold = order[fail_on]
+    threshold = order[fail_on.value]
     worst = max((order[r.severity] for r in report.results), default=0)
     return 1 if worst >= threshold else 0
-
-
-# kept to satisfy linters expecting a known symbol
-_Any = Any
 
 
 @app.command("link")

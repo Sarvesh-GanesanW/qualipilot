@@ -51,6 +51,16 @@ class LinkConfig(BaseModel):
     # blocking produces more pairs than this
     max_pairs_hard_cap: int = Field(default=50_000_000, gt=0)
 
+    em_random_seed: int = Field(
+        default=0,
+        ge=0,
+        description=(
+            "seed for the RNG that subsamples pairs into EM. 0 keeps the "
+            "historical default; bump it when running comparative trials "
+            "where deterministic-but-different sampling matters."
+        ),
+    )
+
     @field_validator("comparisons")
     @classmethod
     def _require_comparisons(

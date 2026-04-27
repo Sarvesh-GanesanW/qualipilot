@@ -18,6 +18,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Check._execute` abstract return type narrowed from `tuple[str, dict]`
   to `tuple[Severity, dict]`. Subclasses now annotate severity
   explicitly; mypy catches accidental returns of bogus severity strings.
+- CLI options `--engine`, `--format`, `--llm`, and `--fail-on` are now
+  proper `Choice` types rendered by Typer. Typos like `--engine polrs`
+  exit cleanly with a parameter error instead of crashing inside
+  `build_engine`. The accepted values stay identical.
+
+### Added
+- `LinkConfig.em_random_seed` (default `0`). The polars and DuckDB
+  linkers both honour it, replacing the previously hardcoded seed.
+  Useful when you want deterministic-but-different sampling across
+  comparative trials.
+- `LLMConfig` now carries a per-provider temperature validator. Setting
+  `provider="bedrock"` with `temperature > 1.0` raises at config time;
+  Bedrock would otherwise 400 mid-run.
 
 ### Added
 - `python -m qualipilot` entry point (`__main__.py`).

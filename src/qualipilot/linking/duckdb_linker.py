@@ -126,7 +126,7 @@ def run_duckdb_linker(  # noqa: PLR0915
     sample_size = config.em_sample_size
     em_levels = (
         levels[
-            np.random.default_rng(0).choice(
+            np.random.default_rng(config.em_random_seed).choice(
                 n_pairs, sample_size, replace=False
             )
         ]
