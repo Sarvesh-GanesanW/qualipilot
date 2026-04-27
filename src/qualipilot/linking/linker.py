@@ -155,7 +155,7 @@ class RecordLinker:
         if levels.shape[0] > sample_size:
             # fit on a random subsample so EM stays cheap; score all
             # pairs with the learned parameters after
-            rng = np.random.default_rng(0)
+            rng = np.random.default_rng(self.config.em_random_seed)
             idx = rng.choice(levels.shape[0], size=sample_size, replace=False)
             em_levels = levels[idx]
             logger.info(

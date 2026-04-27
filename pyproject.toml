@@ -151,6 +151,14 @@ files = ["src/qualipilot"]
 module = ["tests.*"]
 disallow_untyped_defs = false
 
+[[tool.mypy.overrides]]
+module = ["qualipilot.cli"]
+# StrEnum.value narrowness varies between mypy versions; the casts
+# guard the older path and look redundant on the newer one. Either way
+# the runtime types are correct.
+warn_unused_ignores = false
+disable_error_code = ["redundant-cast"]
+
 [tool.pytest.ini_options]
 minversion = "8.0"
 addopts = [

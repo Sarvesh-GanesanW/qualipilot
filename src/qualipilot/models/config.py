@@ -12,7 +12,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from qualipilot.linking.config import LinkConfig
@@ -86,6 +86,21 @@ class LLMConfig(BaseModel):
         "produce a concise markdown report with findings, impact, and "
         "recommended cleanup steps. Be specific; avoid filler."
     )
+
+    @model_validator(mode="after")
+    def _check_per_provider_temperature(self) -> LLMConfig:
+        """Reject temperatures the chosen provider would 400 on.
+
+        Bedrock's Provider Model models cap at 1.0; values up to 2.0
+        survive the generic Pydantic bound but produce a 400 from
+        Bedrock at request time. Catching it here fails fast in CI
+        rather than mid-run.
+        """
+        if self.provider == "bedrock" and self.temperature > 1.0:
+            raise ValueError(
+                f"bedrock temperature must be <= 1.0; got {self.temperature}"
+            )
+        return self
 
 
 class QualipilotConfig(BaseSettings):
