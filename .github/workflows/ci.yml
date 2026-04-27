@@ -47,7 +47,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - uses: astral-sh/setup-uv@v3
       - name: install
-        run: uv pip install --system -e ".[dev,bedrock,dask]"
+        run: uv pip install --system -e ".[dev,bedrock,dask,linking,duckdb]"
       - name: pytest
         run: pytest -q --cov=qualipilot --cov-report=xml
       - name: upload coverage
