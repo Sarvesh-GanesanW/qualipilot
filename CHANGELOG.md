@@ -65,6 +65,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `--llm != none`.
 - `check` subcommand docstring switched from RST backticks to plain
   prose so `--help` doesn't render literal `` ``input_path`` `` markers.
+- Markdown and HTML reports now surface the **affected columns** for
+  every check that has a per-column payload — not just a count.
+  - `missing_values` lists each column with nulls + percent.
+  - `outliers` shows the IQR bounds and outlier count per column.
+  - `ranges` shows the configured `[min, max]` and violation count.
+  - `cardinality` calls out constant columns by name.
+  - `freshness` shows max-timestamp and age for stale columns.
+  - `duplicates` includes a small sample table.
+  Outlier phrasing changed from "columns evaluated: 3" to "numeric
+  columns scanned: 3 (affected: 1)" — previous wording made it look
+  like only 3 of 6 columns were checked.
+  HTML keeps the full raw JSON payload available under a collapsed
+  `<details>` block, so the audit trail isn't lost.
 
 ### Added
 - `python -m qualipilot` entry point (`__main__.py`).
