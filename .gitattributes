@@ -1,0 +1,24 @@
+# Normalize all text files to LF in the repo and in working trees.
+# Binary files are detected automatically by `text=auto`.
+* text=auto eol=lf
+
+# Force LF for shell scripts even if a Windows tool tries to convert them.
+*.sh text eol=lf
+
+# Keep Windows-only scripts as CRLF (cmd.exe / older PowerShell expect it).
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Explicit binary markers (defensive — `text=auto` already covers these).
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.zip  binary
+*.gz   binary
+*.tar  binary
+*.pdf  binary
+*.parquet binary
+*.coverage binary
