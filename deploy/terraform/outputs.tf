@@ -1,14 +1,19 @@
 output "ecr_repository_url" {
   value       = aws_ecr_repository.image.repository_url
-  description = "Push the container image here before `terraform apply`."
+  description = "Build and push the Lambda image to this repository."
 }
 
-output "reports_bucket" {
-  value       = aws_s3_bucket.reports.bucket
-  description = "S3 bucket reports are written to."
+output "data_bucket" {
+  value       = aws_s3_bucket.data.bucket
+  description = "Upload supported files below the configured input prefix."
 }
 
 output "lambda_function_arn" {
-  value       = aws_lambda_function.checker.arn
-  description = "Function ARN you can wire into an EventBridge rule."
+  value       = try(aws_lambda_function.checker[0].arn, null)
+  description = "Function ARN; null until image_digest is supplied."
+}
+
+output "failed_invocations_queue_url" {
+  value       = aws_sqs_queue.failures.url
+  description = "SQS queue containing exhausted asynchronous invocations."
 }

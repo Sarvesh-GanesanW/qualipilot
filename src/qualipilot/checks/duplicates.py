@@ -18,8 +18,12 @@ class DuplicatesCheck(Check):
     def _execute(self, ctx: CheckContext) -> tuple[Severity, dict[str, Any]]:
         subset = ctx.config.duplicate_subset
         total = ctx.engine.duplicate_count(subset=subset)
-        sample = ctx.engine.sample_duplicates(
-            n=ctx.config.sample_size, subset=subset
+        sample = (
+            ctx.engine.sample_duplicates(
+                n=ctx.config.sample_size, subset=subset
+            )
+            if total and ctx.config.sample_size
+            else []
         )
         severity: Severity = "warn" if total > 0 else "ok"
         return severity, {

@@ -1,11 +1,12 @@
 """Run checks using a locally-hosted Ollama model for the LLM step.
 
 Requires:
-    ollama pull llama3.2
+    ollama pull qwen3:4b
 """
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from qualipilot import DataQualityChecker, QualipilotConfig
@@ -20,7 +21,7 @@ def main() -> None:
         llm=LLMConfig(
             provider="ollama",
             base_url="http://localhost:11434",
-            model="llama3.2:latest",
+            model=os.environ.get("OLLAMA_MODEL", "qwen3:4b"),
         ),
     )
     report = DataQualityChecker(SAMPLE, config).run()

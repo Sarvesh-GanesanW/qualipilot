@@ -5,7 +5,7 @@ Run with:
 or pass a specific row count:
     python scripts/bench_linking.py --n 50000
 
-We refuse configurations that would blow past ~10 M candidate pairs
+We refuse configurations that would exceed three million candidate pairs
 so the box stays responsive. Memory usage is reported via psutil if
 available, else skipped.
 """
@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import gc
+import math
 import string
 import time
 from typing import Any
@@ -46,13 +47,12 @@ def _rss_mb() -> float:
         return float("nan")
 
 
-def _build_frame(n: int, dupe_frac: float = 0.01) -> tuple[
-    pl.DataFrame, list[int]
-]:
+def _build_frame(
+    n: int, dupe_frac: float = 0.01
+) -> tuple[pl.DataFrame, list[int]]:
     rng = np.random.default_rng(7)
     names = [
-        "".join(rng.choice(list(string.ascii_lowercase), 12))
-        for _ in range(n)
+        "".join(rng.choice(list(string.ascii_lowercase), 12)) for _ in range(n)
     ]
     dupe_ids = rng.choice(
         n, max(1, int(n * dupe_frac)), replace=False
@@ -81,9 +81,7 @@ def _build_frame(n: int, dupe_frac: float = 0.01) -> tuple[
         {
             "id": list(range(n, n + len(dupe_ids))),
             "name": dupe_names,
-            "postcode": [
-                df["postcode"][int(i)] for i in dupe_ids
-            ],
+            "postcode": [df["postcode"][int(i)] for i in dupe_ids],
             "dob": [df["dob"][int(i)] for i in dupe_ids],
         }
     )
@@ -122,13 +120,13 @@ def _run(
     }
 
 
-def _recall(
-    clusters: dict[Any, int], dupe_ids: list[int], offset: int
-) -> int:
+def _recall(clusters: dict[Any, int], dupe_ids: list[int], offset: int) -> int:
     return sum(
         1
         for i, oi in enumerate(dupe_ids)
-        if clusters.get(offset + i) == clusters.get(int(oi))
+        if offset + i in clusters
+        and int(oi) in clusters
+        and clusters[offset + i] == clusters[int(oi)]
     )
 
 
@@ -150,15 +148,15 @@ def main() -> None:
         f"{'total_ms':>9} {'rss_dmb':>8} {'recall':>7}"
     )
     print("-" * 60)
+    failed = False
     for n in sizes:
         df, dupe_ids = _build_frame(n)
         for backend in ["polars", "duckdb"]:
             try:
                 r = _run(df, backend, comparisons, rules)
             except MemoryError as exc:
-                print(
-                    f"{n:>8,} {backend:>7} skipped — {exc}"
-                )
+                failed = True
+                print(f"{n:>8,} {backend:>7} skipped — {exc}")
                 continue
             recall = _recall(r["_clusters"], dupe_ids, n)
             print(
@@ -170,9 +168,12 @@ def main() -> None:
             gc.collect()
 
         rss = _rss_mb()
-        if rss == rss and rss > MEM_BUDGET_MB:
+        if not math.isnan(rss) and rss > MEM_BUDGET_MB:
             print(f"stopping: RSS {rss:.0f} MB exceeded budget")
+            failed = True
             break
+    if failed:
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

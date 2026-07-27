@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from qualipilot.checks.base import Check, CheckContext
 from qualipilot.models.results import Severity
@@ -23,9 +24,12 @@ class FreshnessCheck(Check):
             return "ok", {"per_column": []}
 
         max_age = timedelta(hours=ctx.config.freshness_max_age_hours)
+        future_tolerance = timedelta(
+            hours=ctx.config.freshness_future_tolerance_hours
+        )
         now = datetime.now(UTC)
         report: list[dict[str, Any]] = []
-        any_stale = False
+        has_error = False
 
         for col in cols:
             max_ts = ctx.engine.max_datetime(col)
@@ -38,29 +42,30 @@ class FreshnessCheck(Check):
                         "note": "no non-null values",
                     }
                 )
-                any_stale = True
+                has_error = True
                 continue
 
-            # normalise naive timestamps so subtraction is safe
-            ts = _as_aware(max_ts)
+            ts = _as_aware(max_ts, ctx.config.freshness_timezone)
             age = now - ts
             stale = age > max_age
-            if stale:
-                any_stale = True
+            is_future = age < -future_tolerance
+            if stale or is_future:
+                has_error = True
             report.append(
                 {
                     "column": col,
                     "max_timestamp": ts.isoformat(),
                     "age_hours": round(age.total_seconds() / 3600, 3),
                     "is_stale": stale,
+                    "is_future": is_future,
                 }
             )
 
-        severity: Severity = "error" if any_stale else "ok"
+        severity: Severity = "error" if has_error else "ok"
         return severity, {"per_column": report}
 
 
-def _as_aware(value: Any) -> datetime:
+def _as_aware(value: Any, naive_timezone: str = "UTC") -> datetime:
     """Coerce engine-returned timestamps into timezone-aware datetime."""
     # pandas.Timestamp, polars Datetime and stdlib datetime all satisfy
     # the duck-typing we need; pandas ts has .to_pydatetime()
@@ -70,9 +75,8 @@ def _as_aware(value: Any) -> datetime:
     elif isinstance(value, datetime):
         dt = value
     else:
-        # last-resort coerce via iso parsing for exotic types
         dt = datetime.fromisoformat(str(value))
 
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=UTC)
+        dt = dt.replace(tzinfo=ZoneInfo(naive_timezone))
     return dt

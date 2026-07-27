@@ -1,23 +1,22 @@
-"""DuckDB engine.
-
-DuckDB is an in-process columnar SQL engine. It is typically the
-single fastest option on one machine: vectorised execution, parallel
-SIMD ops, arrow-native zero-copy interop with Polars/Pandas.
-
-We hold the input frame as a DuckDB relation and answer every
-``Engine`` method with a single SQL query. The relation is keyed off
-a reserved view name ``_t`` registered against a per-instance
-connection, so two engines built over the same process stay
-isolated.
-"""
+"""DuckDB-backed dataframe engine."""
 
 from __future__ import annotations
 
-import itertools
+from contextlib import suppress
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
-from qualipilot.engines.base import Engine
+from qualipilot.engines._duckdb_sql import quote_identifier, quote_literal
+from qualipilot.engines._file_formats import (
+    require_unique_csv_columns,
+    require_valid_json_lines,
+)
+from qualipilot.engines.base import (
+    Engine,
+    reject_nested_columns,
+    validate_column_names,
+    validate_pandas_columns,
+)
 
 try:
     import duckdb
@@ -26,10 +25,6 @@ except ImportError as exc:  # pragma: no cover
         "duckdb is required for DuckDBEngine; "
         "install with `pip install qualipilot[duckdb]`"
     ) from exc
-
-# generate unique view names so the engine can stack inside the same
-# interpreter (e.g. a notebook that creates several checkers)
-_name_counter = itertools.count()
 
 
 class DuckDBEngine(Engine):
@@ -40,70 +35,98 @@ class DuckDBEngine(Engine):
     def __init__(self, con: duckdb.DuckDBPyConnection, view: str) -> None:
         self._con = con
         self._view = view
+        self._dtypes_cache: dict[str, str] | None = None
+        self._closed = False
+        validate_column_names(list(self.dtypes()))
+        reject_nested_columns(
+            [
+                column
+                for column, dtype in self.dtypes().items()
+                if dtype.startswith(("STRUCT(", "MAP(", "UNION("))
+                or dtype.endswith("]")
+            ]
+        )
 
     @classmethod
-    def from_any(cls, data: Any) -> DuckDBEngine:
+    def from_any(
+        cls,
+        data: Any,
+        *,
+        threads: int | None = None,
+    ) -> DuckDBEngine:
+        _validate_source_columns(data)
         con = duckdb.connect(database=":memory:")
-        # duckdb prefers multithreaded scans on a dedicated conn
-        con.execute("PRAGMA threads=8")
-        view = f"_t_{next(_name_counter)}"
+        view = "_t"
+        try:
+            if threads is not None:
+                if threads < 1:
+                    raise ValueError("threads must be >= 1")
+                con.execute("SET threads = ?", [threads])
 
-        if isinstance(data, (str, Path)):
-            path = Path(data)
-            suffix = path.suffix.lower()
-            # duckdb's read_*_auto table functions reject ? parameters,
-            # so we inline the path. Single quotes are escaped to keep
-            # this SQL-injection-safe for filesystem paths.
-            literal = str(path).replace("'", "''")
-            if suffix == ".csv":
+            if isinstance(data, str | Path):
+                path = Path(data)
+                source = _file_source(path)
                 con.execute(
-                    f"CREATE VIEW {view} AS "
-                    f"SELECT * FROM read_csv_auto('{literal}')"
+                    f"CREATE VIEW {quote_identifier(view)} AS "
+                    f"SELECT * FROM {source}"
                 )
-            elif suffix in {".parquet", ".pq"}:
-                con.execute(
-                    f"CREATE VIEW {view} AS "
-                    f"SELECT * FROM read_parquet('{literal}')"
-                )
-            elif suffix in {".ndjson", ".jsonl", ".json"}:
-                con.execute(
-                    f"CREATE VIEW {view} AS "
-                    f"SELECT * FROM read_json_auto('{literal}')"
-                )
+            elif type(data).__module__.startswith("pandas"):
+                con.register(view, data)
+            elif type(data).__module__.startswith("polars"):
+                unsupported = [
+                    column
+                    for column, dtype in data.schema.items()
+                    if str(dtype) in {"Int128", "UInt128"}
+                ]
+                if unsupported:
+                    raise ValueError(
+                        "DuckDB engine does not support 128-bit Polars "
+                        f"columns: {unsupported}"
+                    )
+                con.register(view, data.to_arrow())
+            elif type(data).__module__.startswith("pyarrow"):
+                con.register(view, data)
             else:
-                raise ValueError(f"unsupported file type: {suffix}")
-        elif type(data).__module__.startswith("pandas"):
-            # register works zero-copy via arrow
-            con.register(view, data)
-        elif type(data).__module__.startswith("polars"):
-            # polars -> arrow -> duckdb is also zero-copy
-            con.register(view, data.to_arrow())
-        elif type(data).__module__.startswith("pyarrow"):
-            con.register(view, data)
-        else:
-            raise TypeError(
-                f"cannot build DuckDBEngine from {type(data).__name__}"
-            )
-        return cls(con, view)
+                raise TypeError(
+                    f"cannot build DuckDBEngine from {type(data).__name__}"
+                )
+            return cls(con, view)
+        except Exception:
+            con.close()
+            raise
+
+    def close(self) -> None:
+        """Release the private DuckDB connection and registered inputs."""
+        if not self._closed:
+            self._con.close()
+            self._closed = True
+
+    def __enter__(self) -> DuckDBEngine:
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        self.close()
+
+    def __del__(self) -> None:
+        with suppress(Exception):
+            self.close()
 
     # ---- structural info ----------------------------------------------
 
     def row_count(self) -> int:
-        return int(self._scalar(f"SELECT COUNT(*) FROM {self._view}"))
+        view = quote_identifier(self._view)
+        return int(self._scalar(f"SELECT COUNT(*) FROM {view}"))
 
     def columns(self) -> list[str]:
-        return [
-            row[0]
-            for row in self._con.execute(
-                f"DESCRIBE SELECT * FROM {self._view}"
-            ).fetchall()
-        ]
+        return list(self.dtypes())
 
     def dtypes(self) -> dict[str, str]:
-        rows = self._con.execute(
-            f"DESCRIBE SELECT * FROM {self._view}"
-        ).fetchall()
-        return {name: str(dtype) for name, dtype, *_ in rows}
+        if self._dtypes_cache is None:
+            rows = self._con.execute(
+                f"DESCRIBE SELECT * FROM {quote_identifier(self._view)}"
+            ).fetchall()
+            self._dtypes_cache = {name: str(dtype) for name, dtype, *_ in rows}
+        return dict(self._dtypes_cache)
 
     def numeric_columns(self) -> list[str]:
         numeric_types = {
@@ -127,7 +150,13 @@ class DuckDBEngine(Engine):
         ]
 
     def datetime_columns(self) -> list[str]:
-        dt_types = {"DATE", "TIMESTAMP", "TIMESTAMP_S", "TIMESTAMP_MS"}
+        dt_types = {
+            "DATE",
+            "TIMESTAMP",
+            "TIMESTAMP_S",
+            "TIMESTAMP_MS",
+            "TIMESTAMP_NS",
+        }
         return [
             c
             for c, t in self.dtypes().items()
@@ -142,28 +171,46 @@ class DuckDBEngine(Engine):
             return {}
         # SUM(CASE WHEN x IS NULL THEN 1 ELSE 0 END) per column in one pass
         selects = ", ".join(
-            f'SUM(CASE WHEN "{c}" IS NULL THEN 1 ELSE 0 END) AS "{c}"'
+            f"SUM(CASE WHEN {self._missing_sql(c)} THEN 1 ELSE 0 END) "
+            f"AS {quote_identifier(c)}"
             for c in cols
         )
-        row = self._row(f"SELECT {selects} FROM {self._view}")
+        row = self._row(
+            f"SELECT {selects} FROM {quote_identifier(self._view)}"
+        )
         return {c: int(v or 0) for c, v in zip(cols, row, strict=True)}
 
     def distinct_count(self, column: str) -> int:
-        return int(
-            self._scalar(
-                f'SELECT COUNT(DISTINCT "{column}") FROM {self._view}'
-            )
+        return self.distinct_counts([column])[column]
+
+    def distinct_counts(self, columns: list[str]) -> dict[str, int]:
+        if not columns:
+            return {}
+        selects = ", ".join(
+            f"COUNT(DISTINCT CASE WHEN {self._missing_sql(column)} "
+            f"THEN NULL ELSE {quote_identifier(column)} END) "
+            f"AS {quote_identifier(column)}"
+            for column in columns
         )
+        row = self._row(
+            f"SELECT {selects} FROM {quote_identifier(self._view)}"
+        )
+        return {
+            column: int(value)
+            for column, value in zip(columns, row, strict=True)
+        }
 
     def top_values(
         self,
         column: str,
         n: int = 10,
     ) -> list[tuple[str, int]]:
+        identifier = quote_identifier(column)
         rows = self._con.execute(
-            f'SELECT "{column}" AS v, COUNT(*) AS c FROM {self._view} '
-            f'WHERE "{column}" IS NOT NULL '
-            f"GROUP BY 1 ORDER BY c DESC LIMIT ?",
+            f"SELECT {identifier} AS v, COUNT(*) AS c "
+            f"FROM {quote_identifier(self._view)} "
+            f"WHERE NOT ({self._missing_sql(column)}) "
+            f"GROUP BY 1 ORDER BY c DESC, CAST(v AS VARCHAR) ASC LIMIT ?",
             [n],
         ).fetchall()
         return [(str(v), int(c)) for v, c in rows]
@@ -178,11 +225,15 @@ class DuckDBEngine(Engine):
         # quantile_cont is exact in duckdb; quantile() is approximate
         # but faster — we use the exact one for tight IQR bounds
         selects = ", ".join(
-            f'quantile_cont("{c}", {q}) AS "{c}__{int(q * 1000)}"'
+            f"quantile_cont({quote_identifier(c)}, {float(q)!r}) "
+            f"FILTER (WHERE NOT ({self._missing_sql(c)})) "
+            f"AS {quote_identifier(f'{c}__q{index}')}"
             for c in columns
-            for q in qs
+            for index, q in enumerate(qs)
         )
-        row = self._row(f"SELECT {selects} FROM {self._view}")
+        row = self._row(
+            f"SELECT {selects} FROM {quote_identifier(self._view)}"
+        )
         out: dict[str, dict[float, float]] = {c: {} for c in columns}
         idx = 0
         for c in columns:
@@ -194,40 +245,24 @@ class DuckDBEngine(Engine):
                 idx += 1
         return out
 
-    def describe(self) -> dict[str, dict[str, float]]:
-        numeric = self.numeric_columns()
-        if not numeric:
-            return {}
-        rel = self._con.sql(f"SELECT * FROM {self._view}")
-        desc = rel.describe().fetchdf()
-        stat_col = desc.columns[0]
-        out: dict[str, dict[str, float]] = {c: {} for c in numeric}
-        for _, r in desc.iterrows():
-            stat = str(r[stat_col])
-            for c in numeric:
-                val = r.get(c)
-                if val is None:
-                    continue
-                try:
-                    out[c][stat] = float(val)
-                except (TypeError, ValueError):
-                    continue
-        return out
-
     # ---- filters ------------------------------------------------------
 
     def duplicate_count(self, subset: list[str] | None = None) -> int:
-        cols_sql = _quoted_list(subset or self.columns())
+        columns = subset or self.columns()
+        if not columns:
+            row_count = self.row_count()
+            return row_count if row_count > 1 else 0
+        cols_sql = self._duplicate_keys_sql(columns)
         return int(
             self._scalar(
                 f"""
                 WITH counts AS (
-                    SELECT {cols_sql}, COUNT(*) AS n
-                    FROM {self._view}
+                    SELECT COUNT(*) AS duplicate_count
+                    FROM {quote_identifier(self._view)}
                     GROUP BY {cols_sql}
                     HAVING COUNT(*) > 1
                 )
-                SELECT COALESCE(SUM(n), 0) FROM counts
+                SELECT COALESCE(SUM(duplicate_count), 0) FROM counts
                 """
             )
         )
@@ -238,40 +273,63 @@ class DuckDBEngine(Engine):
         subset: list[str] | None = None,
     ) -> list[dict[str, Any]]:
         cols = subset or self.columns()
-        cols_sql = _quoted_list(cols)
-        rows = self._con.execute(
+        if not cols:
+            return [{}] * min(n, self.duplicate_count())
+        cols_sql = self._duplicate_keys_sql(cols)
+        return self._records(
             f"""
-            WITH dupes AS (
-                SELECT *, COUNT(*) OVER (PARTITION BY {cols_sql}) AS _n
-                FROM {self._view}
-            )
-            SELECT * EXCLUDE (_n) FROM dupes WHERE _n > 1 LIMIT ?
+            SELECT *
+            FROM {quote_identifier(self._view)}
+            QUALIFY COUNT(*) OVER (PARTITION BY {cols_sql}) > 1
+            LIMIT ?
             """,
             [n],
-        ).fetchdf()
-        return cast(list[dict[str, Any]], rows.to_dict(orient="records"))
+        )
 
     def count_outside(self, column: str, low: float, high: float) -> int:
-        return int(
-            self._scalar(
-                f"SELECT COUNT(*) FROM {self._view} "
-                f'WHERE "{column}" < ? OR "{column}" > ?',
-                [low, high],
-            )
+        return self.counts_outside({column: (low, high)})[column]
+
+    def counts_outside(
+        self,
+        ranges: dict[str, tuple[float, float]],
+    ) -> dict[str, int]:
+        if not ranges:
+            return {}
+        columns = list(ranges)
+        selects = ", ".join(
+            "COUNT(*) FILTER (WHERE NOT "
+            f"({self._missing_sql(column)}) AND "
+            f"({quote_identifier(column)} < ? OR "
+            f"{quote_identifier(column)} > ?)) "
+            f"AS {quote_identifier(column)}"
+            for column in columns
         )
+        params = [bound for column in columns for bound in ranges[column]]
+        row = self._row(
+            f"SELECT {selects} FROM {quote_identifier(self._view)}",
+            params,
+        )
+        return {
+            column: int(value)
+            for column, value in zip(columns, row, strict=True)
+        }
 
     def sample_outside(
         self, column: str, low: float, high: float, n: int
     ) -> list[dict[str, Any]]:
-        rows = self._con.execute(
-            f"SELECT * FROM {self._view} "
-            f'WHERE "{column}" < ? OR "{column}" > ? LIMIT ?',
+        identifier = quote_identifier(column)
+        return self._records(
+            f"SELECT * FROM {quote_identifier(self._view)} "
+            f"WHERE NOT ({self._missing_sql(column)}) "
+            f"AND ({identifier} < ? OR {identifier} > ?) LIMIT ?",
             [low, high, n],
-        ).fetchdf()
-        return cast(list[dict[str, Any]], rows.to_dict(orient="records"))
+        )
 
     def max_datetime(self, column: str) -> Any:
-        return self._scalar(f'SELECT MAX("{column}") FROM {self._view}')
+        return self._scalar(
+            f"SELECT MAX({quote_identifier(column)}) "
+            f"FROM {quote_identifier(self._view)}"
+        )
 
     # ---- internals -----------------------------------------------------
 
@@ -294,6 +352,80 @@ class DuckDBEngine(Engine):
     def _scalar(self, sql: str, params: list[Any] | None = None) -> Any:
         return self._row(sql, params)[0]
 
+    def _records(
+        self, sql: str, params: list[Any] | None = None
+    ) -> list[dict[str, Any]]:
+        cursor = (
+            self._con.execute(sql, params)
+            if params is not None
+            else self._con.execute(sql)
+        )
+        columns = [description[0] for description in cursor.description]
+        return [
+            dict(zip(columns, row, strict=True)) for row in cursor.fetchall()
+        ]
 
-def _quoted_list(cols: list[str]) -> str:
-    return ", ".join(f'"{c}"' for c in cols)
+    def _missing_sql(self, column: str) -> str:
+        identifier = quote_identifier(column)
+        dtype = self.dtypes()[column].split("(")[0]
+        if dtype in {"FLOAT", "DOUBLE"}:
+            return f"{identifier} IS NULL OR isnan({identifier})"
+        return f"{identifier} IS NULL"
+
+    def _duplicate_keys_sql(self, columns: list[str]) -> str:
+        dtypes = self.dtypes()
+        keys = []
+        for column in columns:
+            identifier = quote_identifier(column)
+            if dtypes[column].split("(")[0] in {"FLOAT", "DOUBLE"}:
+                keys.append(
+                    f"CASE WHEN isnan({identifier}) THEN NULL "
+                    f"ELSE {identifier} END"
+                )
+            else:
+                keys.append(identifier)
+        return ", ".join(keys)
+
+
+def _file_source(path: Path) -> str:
+    """Return the DuckDB reader expression for a local file."""
+    suffix = path.suffix.lower()
+    literal = quote_literal(str(path))
+    if suffix == ".csv":
+        require_unique_csv_columns(path)
+        return f"read_csv_auto({literal}, delim = ',')"
+    if suffix in {".parquet", ".pq"}:
+        return f"read_parquet({literal})"
+    if suffix in {".ndjson", ".jsonl"}:
+        scalar_types = require_valid_json_lines(path)
+        dtypes = {
+            "string": "VARCHAR",
+            "integer": "BIGINT",
+            "number": "DOUBLE",
+            "boolean": "BOOLEAN",
+        }
+        columns = ", ".join(
+            f"{quote_identifier(column)}: {quote_literal(dtypes[family])}"
+            for column, family in scalar_types.items()
+        )
+        return (
+            f"read_json_auto({literal}, format = 'newline_delimited', "
+            f"columns = {{{columns}}})"
+        )
+    raise ValueError(f"unsupported file type: {suffix}")
+
+
+def _validate_source_columns(data: Any) -> None:
+    module = type(data).__module__
+    if module.startswith("pandas"):
+        validate_pandas_columns(data)
+    elif module.startswith("polars"):
+        validate_column_names(data.columns)
+    elif module.startswith("pyarrow"):
+        validate_column_names(data.column_names)
+    elif isinstance(data, str | Path):
+        path = Path(data)
+        if path.suffix.lower() in {".parquet", ".pq"}:
+            import pyarrow.parquet as pq
+
+            validate_column_names(pq.read_schema(path).names)

@@ -1,4 +1,6 @@
-"""Production-grade data quality checker with pluggable LLM backends."""
+"""Configurable data quality checks for tabular data."""
+
+from importlib.metadata import version
 
 from qualipilot.checker import DataQualityChecker
 from qualipilot.models.config import CheckConfig, LLMConfig, QualipilotConfig
@@ -13,4 +15,4 @@ __all__ = [
     "QualityReport",
 ]
 
-__version__ = "2.0.1"
+__version__ = version("qualipilot")

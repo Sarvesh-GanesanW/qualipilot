@@ -11,12 +11,13 @@ from typing import Any
 
 import httpx
 from tenacity import (
-    retry,
-    retry_if_exception_type,
+    Retrying,
+    retry_if_exception,
     stop_after_attempt,
     wait_exponential,
 )
 
+from qualipilot.llm._http import is_retryable_http_error
 from qualipilot.llm.base import LLMProvider
 from qualipilot.models.config import LLMConfig
 
@@ -29,7 +30,7 @@ class OpenAICompatProvider(LLMProvider):
     def __init__(self, cfg: LLMConfig) -> None:
         self._cfg = cfg
         self._base = cfg.base_url.rstrip("/")
-        self._model = cfg.model or "gpt-4o-mini"
+        self._model = cfg.model
         if not cfg.api_key:
             # some open-source servers still require a bearer token
             # even when they do not validate it
@@ -47,21 +48,21 @@ class OpenAICompatProvider(LLMProvider):
                 {"role": "user", "content": user},
             ],
         }
-        return self._post(payload)
+        retrying = Retrying(
+            reraise=True,
+            stop=stop_after_attempt(self._cfg.retries + 1),
+            wait=wait_exponential(multiplier=1, min=1, max=15),
+            retry=retry_if_exception(is_retryable_http_error),
+        )
+        return str(retrying(self._post, payload))
 
-    @retry(
-        reraise=True,
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=1, max=15),
-        retry=retry_if_exception_type(
-            (httpx.HTTPError, httpx.TimeoutException)
-        ),
-    )
     def _post(self, payload: dict[str, Any]) -> str:
         url = f"{self._base}/chat/completions"
         headers = {"Content-Type": "application/json"}
         if self._cfg.api_key:
-            headers["Authorization"] = f"Bearer {self._cfg.api_key}"
+            headers["Authorization"] = (
+                f"Bearer {self._cfg.api_key.get_secret_value()}"
+            )
 
         with httpx.Client(timeout=self._cfg.timeout_seconds) as client:
             response = client.post(url, json=payload, headers=headers)
@@ -69,8 +70,11 @@ class OpenAICompatProvider(LLMProvider):
             data = response.json()
 
         try:
-            return str(data["choices"][0]["message"]["content"])
-        except (KeyError, IndexError) as exc:
+            content = data["choices"][0]["message"]["content"]
+            if not isinstance(content, str) or not content:
+                raise ValueError("response content is empty")
+            return content
+        except (KeyError, IndexError, TypeError, ValueError) as exc:
             raise RuntimeError(
-                f"unexpected openai-compat response: {data!r}"
+                "unexpected openai-compatible response shape"
             ) from exc

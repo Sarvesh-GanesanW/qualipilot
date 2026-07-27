@@ -20,7 +20,10 @@ class RangesCheck(Check):
         if not ranges:
             return "ok", {"per_column": []}
 
-        existing = set(ctx.engine.columns())
+        columns = (
+            ctx.columns if ctx.columns is not None else ctx.engine.columns()
+        )
+        existing = set(columns)
         numeric = set(ctx.engine.numeric_columns())
         report: list[dict[str, Any]] = []
         any_violations = False
@@ -28,8 +31,6 @@ class RangesCheck(Check):
 
         for col, spec in ranges.items():
             if col not in existing:
-                # skip columns that were dropped upstream; surfaces as
-                # a warning via missing data rather than hard fail
                 report.append(
                     {
                         "column": col,
@@ -68,7 +69,7 @@ class RangesCheck(Check):
                 ctx.engine.sample_outside(
                     col, spec.min, spec.max, ctx.config.sample_size
                 )
-                if count
+                if count and ctx.config.sample_size
                 else []
             )
             if count:
@@ -83,11 +84,7 @@ class RangesCheck(Check):
                 }
             )
 
-        severity: Severity
-        if any_violations:
-            severity = "error"
-        elif any_misapplied:
-            severity = "warn"
-        else:
-            severity = "ok"
+        severity: Severity = (
+            "error" if any_violations or any_misapplied else "ok"
+        )
         return severity, {"per_column": report}

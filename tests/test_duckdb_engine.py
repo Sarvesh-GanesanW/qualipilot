@@ -7,8 +7,11 @@ the polars/pandas reference numbers on the same fixture.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pandas as pd
 import polars as pl
+import pyarrow as pa
 import pytest
 
 duckdb = pytest.importorskip("duckdb")
@@ -31,9 +34,52 @@ def test_from_polars_dataframe(dirty_pandas: pd.DataFrame) -> None:
     assert eng.row_count() == len(dirty_pandas)
 
 
+def test_rejects_polars_int128() -> None:
+    if not hasattr(pl, "Int128"):
+        pytest.skip("Polars does not expose Int128")
+    frame = pl.DataFrame({"value": pl.Series([2**100], dtype=pl.Int128)})
+
+    with pytest.raises(ValueError, match="does not support 128-bit"):
+        DuckDBEngine.from_any(frame)
+
+
 def test_from_csv_path(tmp_csv) -> None:
     eng = DuckDBEngine.from_any(str(tmp_csv))
     assert eng.row_count() > 0
+
+
+def test_csv_null_tokens_match(tmp_path: Path) -> None:
+    path = tmp_path / "tokens.csv"
+    path.write_text('value\nNA\n""\nfoo\n', encoding="utf-8")
+
+    engine = DuckDBEngine.from_any(path)
+
+    assert engine.null_counts() == {"value": 1}
+    assert engine.top_values("value") == [("NA", 1), ("foo", 1)]
+
+
+def test_json_array_files_are_not_supported(tmp_path: Path) -> None:
+    path = tmp_path / "records.json"
+    pd.DataFrame({"id": [1, 2]}).to_json(path)
+
+    with pytest.raises(ValueError, match="unsupported file type"):
+        DuckDBEngine.from_any(path)
+
+
+def test_json_array_cannot_disguise_itself_as_jsonl(tmp_path: Path) -> None:
+    path = tmp_path / "records.jsonl"
+    path.write_text('[{"id":1},{"id":2}]\n', encoding="utf-8")
+
+    with pytest.raises(ValueError, match="must be an object"):
+        DuckDBEngine.from_any(path)
+
+
+def test_jsonl_duplicate_keys_are_rejected(tmp_path: Path) -> None:
+    path = tmp_path / "duplicates.jsonl"
+    path.write_text('{"id":1,"id":2}\n', encoding="utf-8")
+
+    with pytest.raises(ValueError, match="duplicate object keys"):
+        DuckDBEngine.from_any(path)
 
 
 def test_unsupported_input_type_raises() -> None:
@@ -94,13 +140,6 @@ def test_quantiles_empty_inputs(dirty_pandas: pd.DataFrame) -> None:
     assert eng.quantiles(["amount"], qs=()) == {}
 
 
-def test_describe(dirty_pandas: pd.DataFrame) -> None:
-    eng = DuckDBEngine.from_any(dirty_pandas)
-    desc = eng.describe()
-    assert "amount" in desc
-    assert "min" in desc["amount"] or "mean" in desc["amount"]
-
-
 def test_duplicate_count_global(dirty_pandas: pd.DataFrame) -> None:
     duck = DuckDBEngine.from_any(dirty_pandas).duplicate_count()
     pol = PolarsEngine.from_any(dirty_pandas).duplicate_count()
@@ -138,17 +177,78 @@ def test_build_engine_dispatches_duckdb(
 
 
 def test_max_datetime(stale_timestamps_pandas: pd.DataFrame) -> None:
-    # duckdb requires pytz for tz-aware datetime values; skip if absent
-    pytest.importorskip("pytz")
     eng = DuckDBEngine.from_any(stale_timestamps_pandas)
     assert eng.max_datetime("event_ts") is not None
 
 
-def test_unique_view_names_per_engine(dirty_pandas: pd.DataFrame) -> None:
-    """Two engines in the same process must not collide on view name."""
+def test_private_connections_isolate_engines(
+    dirty_pandas: pd.DataFrame,
+) -> None:
     a = DuckDBEngine.from_any(dirty_pandas)
     b = DuckDBEngine.from_any(dirty_pandas)
-    # different view names so the registrations stay isolated
-    assert a._view != b._view
-    # both still functional
+    assert a._con is not b._con
     assert a.row_count() == b.row_count() == len(dirty_pandas)
+
+
+def test_malicious_column_name_cannot_inject_sql() -> None:
+    column = 'x") FROM (SELECT 1 AS x); SELECT 999; --'
+    frame = pd.DataFrame([[2]], columns=[column])
+    engine = DuckDBEngine.from_any(frame)
+    assert engine.distinct_count(column) == 1
+    assert engine.null_counts() == {column: 0}
+
+
+def test_native_nan_is_treated_as_missing() -> None:
+    frame = pl.DataFrame({"value": [1.0, float("nan")]})
+    engine = DuckDBEngine.from_any(frame)
+    assert engine.null_counts() == {"value": 1}
+    assert engine.distinct_count("value") == 1
+    assert engine.top_values("value") == [("1.0", 1)]
+
+
+def test_nan_and_null_are_the_same_duplicate_key() -> None:
+    frame = pl.DataFrame(
+        {"value": [None, float("nan")], "other": [1, 1]},
+        schema={"value": pl.Float64, "other": pl.Int64},
+    )
+    engine = DuckDBEngine.from_any(frame)
+
+    assert engine.duplicate_count() == 2
+    assert len(engine.sample_duplicates(10)) == 2
+
+
+def test_nested_columns_are_rejected() -> None:
+    frame = pl.DataFrame({"id": [1], "nested": [["value"]]})
+
+    with pytest.raises(TypeError, match=r"flatten.*nested"):
+        DuckDBEngine.from_any(frame)
+
+
+def test_parquet_nan_is_excluded_from_ranges(tmp_path: Path) -> None:
+    path = tmp_path / "values.parquet"
+    pl.DataFrame({"value": [float("nan"), 0.0, 100.0]}).write_parquet(path)
+    engine = DuckDBEngine.from_any(path)
+
+    assert engine.count_outside("value", -1, 10) == 1
+    assert engine.sample_outside("value", -1, 10, 10) == [{"value": 100.0}]
+
+
+def test_duplicate_sample_does_not_collide_with_n_column() -> None:
+    frame = pd.DataFrame({"value": [1, 1], "_n": ["original", "original"]})
+    engine = DuckDBEngine.from_any(frame)
+    assert engine.sample_duplicates(5) == frame.to_dict(orient="records")
+
+
+def test_timestamp_ns_is_datetime() -> None:
+    table = pa.table({"event_ts": pa.array([], type=pa.timestamp("ns"))})
+    engine = DuckDBEngine.from_any(table)
+    assert engine.datetime_columns() == ["event_ts"]
+
+
+def test_context_manager_closes_connection(
+    dirty_pandas: pd.DataFrame,
+) -> None:
+    with DuckDBEngine.from_any(dirty_pandas, threads=1) as engine:
+        assert engine.row_count() == len(dirty_pandas)
+    with pytest.raises(duckdb.ConnectionException):
+        engine.row_count()

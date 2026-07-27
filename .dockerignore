@@ -16,6 +16,7 @@ htmlcov/
 coverage.xml
 dist/
 build/
+reports/
 *.egg-info/
 docs/
 tests/

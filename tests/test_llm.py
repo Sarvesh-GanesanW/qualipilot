@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
+import httpx
 import pytest
 
 from qualipilot.llm import build_provider
@@ -72,13 +73,40 @@ def test_openai_provider_sends_bearer() -> None:
     assert kwargs["headers"]["Authorization"] == "Bearer sk-test"
 
 
-@pytest.mark.integration
+def test_openai_does_not_retry_permanent_http_errors() -> None:
+    cfg = LLMConfig(
+        provider="openai",
+        base_url="https://api.example.com",
+        model="test-model",
+        retries=0,
+    )
+    provider = build_provider(cfg)
+    request = httpx.Request("POST", "https://api.example.com")
+    response = httpx.Response(401, request=request)
+    error = httpx.HTTPStatusError(
+        "unauthorized",
+        request=request,
+        response=response,
+    )
+    fake_response = MagicMock()
+    fake_response.raise_for_status.side_effect = error
+
+    with patch("httpx.Client") as client_cls:
+        client = client_cls.return_value.__enter__.return_value
+        client.post.return_value = fake_response
+        with pytest.raises(httpx.HTTPStatusError):
+            provider.generate(system="s", user="u")
+
+    client.post.assert_called_once()
+
+
 def test_bedrock_provider_happy_path() -> None:
     boto3 = pytest.importorskip("boto3")
     _ = boto3
     cfg = LLMConfig(
         provider="bedrock",
-        model="provider.model-3-5-haiku-20241022-v1:0",
+        model="provider.test-model-v1",
+        retries=4,
     )
 
     fake_response = {
@@ -92,9 +120,51 @@ def test_bedrock_provider_happy_path() -> None:
     with patch(
         "boto3.Session.client",
         return_value=MagicMock(converse=MagicMock(return_value=fake_response)),
-    ):
+    ) as client_method:
         provider = build_provider(cfg)
         assert provider.generate(system="s", user="u") == "done"
+    boto_config = client_method.call_args.kwargs["config"]
+    assert boto_config.retries["total_max_attempts"] == 5
+
+
+def test_bedrock_rejects_unexpected_response() -> None:
+    pytest.importorskip("boto3")
+    cfg = LLMConfig(provider="bedrock", model="provider.test-model-v1")
+
+    with patch(
+        "boto3.Session.client",
+        return_value=MagicMock(converse=MagicMock(return_value={})),
+    ):
+        provider = build_provider(cfg)
+        with pytest.raises(RuntimeError, match="unexpected bedrock response"):
+            provider.generate(system="s", user="u")
+
+
+def test_bedrock_collects_text_after_reasoning_blocks() -> None:
+    pytest.importorskip("boto3")
+    cfg = LLMConfig(provider="bedrock", model="provider.reasoning-model-v1")
+    response = {
+        "output": {
+            "message": {
+                "content": [
+                    {
+                        "reasoningContent": {
+                            "reasoningText": {"text": "hidden"}
+                        }
+                    },
+                    {"text": "first"},
+                    {"text": "second"},
+                ]
+            }
+        }
+    }
+
+    with patch(
+        "boto3.Session.client",
+        return_value=MagicMock(converse=MagicMock(return_value=response)),
+    ):
+        provider = build_provider(cfg)
+        assert provider.generate(system="s", user="u") == "first\nsecond"
 
 
 def test_unknown_provider_raises() -> None:

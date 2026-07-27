@@ -51,6 +51,10 @@ def render_html(report: QualityReport) -> str:
         llm_html = (
             f"<h2>LLM Findings</h2><pre>{html.escape(report.llm_report)}</pre>"
         )
+    elif report.llm_error:
+        llm_html = (
+            f"<h2>LLM Failure</h2><pre>{html.escape(report.llm_error)}</pre>"
+        )
 
     return f"""<!doctype html>
 <html lang='en'>
@@ -83,11 +87,17 @@ Dataset: {report.dataset.row_count:,} rows x
 def _render_check_html(result: CheckResult) -> str:
     """Render one check's section: human summary plus collapsed JSON."""
     summary = _human_summary_html(result)
+    error_html = (
+        f"<p><b>Execution failed:</b> {html.escape(result.error)}</p>"
+        if result.error
+        else ""
+    )
     raw = html.escape(json.dumps(result.payload, indent=2, default=str))
     return (
         f"<h3>{html.escape(result.name)} "
         f"<span class='badge badge-{result.severity}'>"
         f"{result.severity}</span></h3>"
+        f"{error_html}"
         f"{summary}"
         f"<details><summary class='muted'>raw payload</summary>"
         f"<pre>{raw}</pre></details>"
@@ -99,6 +109,8 @@ def _human_summary_html(result: CheckResult) -> str:
     if not payload:
         return ""
     name = result.name
+    if name == "dataset_contract":
+        return _dataset_contract_html(payload)
     if name == "missing_values":
         return _missing_html(payload)
     if name == "duplicates":
@@ -144,6 +156,32 @@ def _missing_html(payload: dict[str, Any]) -> str:
     )
 
 
+def _dataset_contract_html(payload: dict[str, Any]) -> str:
+    head = (
+        f"<p>Rows: <b>{payload.get('row_count', 0):,}</b> "
+        f"(minimum: {payload.get('min_rows', 0):,}).</p>"
+    )
+    missing = payload.get("missing_required_columns") or []
+    mismatches = payload.get("dtype_mismatches") or []
+    if missing:
+        columns = ", ".join(
+            f"<code>{html.escape(str(column))}</code>" for column in missing
+        )
+        head += f"<p>Missing required columns: {columns}.</p>"
+    if mismatches:
+        rows = "".join(
+            f"<tr><td><code>{html.escape(str(item['column']))}</code></td>"
+            f"<td><code>{html.escape(str(item['expected']))}</code></td>"
+            f"<td><code>{html.escape(str(item['actual']))}</code></td></tr>"
+            for item in mismatches
+        )
+        head += (
+            "<table><thead><tr><th>Column</th><th>Expected dtype</th>"
+            f"<th>Actual dtype</th></tr></thead><tbody>{rows}</tbody></table>"
+        )
+    return head
+
+
 def _duplicates_html(payload: dict[str, Any]) -> str:
     head = (
         "<p>Duplicate rows: "
@@ -177,27 +215,36 @@ def _types_html(payload: dict[str, Any]) -> str:
 def _outliers_html(payload: dict[str, Any]) -> str:
     per_col = payload.get("per_column", [])
     affected = [c for c in per_col if c.get("outlier_count", 0) > 0]
+    skipped = [c for c in per_col if c.get("skipped")]
     affected.sort(key=lambda c: c["outlier_count"], reverse=True)
     head = (
         f"<p>Numeric columns scanned: {len(per_col)} "
-        f"(<b>{len(affected)}</b> with outliers).</p>"
+        f"(<b>{len(affected)}</b> with outliers, "
+        f"<b>{len(skipped)}</b> skipped).</p>"
     )
-    if not affected:
-        return head
-    rows = "".join(
-        f"<tr><td><code>{html.escape(c['column'])}</code></td>"
-        f"<td class='numeric'>{c['outlier_count']:,}</td>"
-        f"<td class='numeric'><code>"
-        f"[{c['lower_bound']:.2f}, {c['upper_bound']:.2f}]</code></td></tr>"
-        for c in affected[:10]
-    )
-    return (
-        head
-        + "<table><thead><tr><th>Column</th><th>Outliers</th>"
-        + "<th>Bounds (IQR)</th></tr></thead><tbody>"
-        + rows
-        + "</tbody></table>"
-    )
+    if affected:
+        rows = "".join(
+            f"<tr><td><code>{html.escape(c['column'])}</code></td>"
+            f"<td class='numeric'>{c['outlier_count']:,}</td>"
+            f"<td class='numeric'><code>"
+            f"[{c['lower_bound']:.2f}, {c['upper_bound']:.2f}]</code></td>"
+            "</tr>"
+            for c in affected[:10]
+        )
+        head += (
+            "<table><thead><tr><th>Column</th><th>Outliers</th>"
+            + "<th>Bounds (IQR)</th></tr></thead><tbody>"
+            + rows
+            + "</tbody></table>"
+        )
+    if skipped:
+        notes = "".join(
+            f"<li><code>{html.escape(c['column'])}</code>: "
+            f"{html.escape(str(c['skipped']))}</li>"
+            for c in skipped
+        )
+        head += f"<ul class='muted'>{notes}</ul>"
+    return head
 
 
 def _ranges_html(payload: dict[str, Any]) -> str:
@@ -243,24 +290,37 @@ def _cardinality_html(payload: dict[str, Any]) -> str:
 
 def _freshness_html(payload: dict[str, Any]) -> str:
     per_col = payload.get("per_column", [])
-    stale = [c for c in per_col if c.get("is_stale")]
-    head = f"<p>Checked: {len(per_col)} (stale: <b>{len(stale)}</b>).</p>"
-    if not stale:
-        return head
-    rows = "".join(
-        "<tr>"
-        f"<td><code>{html.escape(c['column'])}</code></td>"
-        f"<td>{html.escape(str(c.get('max_timestamp', 'n/a')))}</td>"
-        f"<td class='numeric'>"
-        f"{(c.get('age_hours') or 0):.1f}h</td></tr>"
-        for c in stale
+    invalid = [c for c in per_col if c.get("is_stale") or c.get("is_future")]
+    head = (
+        f"<p>Checked: {len(per_col)} "
+        f"(invalid freshness: <b>{len(invalid)}</b>).</p>"
     )
+    if not invalid:
+        return head
+    rows = "".join(_freshness_row_html(column) for column in invalid)
     return (
         head
         + "<table><thead><tr><th>Column</th><th>Max Timestamp</th>"
         + "<th>Age</th></tr></thead><tbody>"
         + rows
         + "</tbody></table>"
+    )
+
+
+def _freshness_row_html(column: dict[str, Any]) -> str:
+    age = column.get("age_hours")
+    detail = (
+        html.escape(str(column.get("note", "no non-null values")))
+        if age is None
+        else (
+            f"{abs(age):.1f}h {'future' if column.get('is_future') else 'old'}"
+        )
+    )
+    return (
+        "<tr>"
+        f"<td><code>{html.escape(column['column'])}</code></td>"
+        f"<td>{html.escape(str(column.get('max_timestamp') or 'n/a'))}</td>"
+        f"<td class='numeric'>{detail}</td></tr>"
     )
 
 
@@ -271,6 +331,8 @@ def _linkage_html(payload: dict[str, Any]) -> str:
         "<ul>"
         f"<li>candidate pairs: {payload.get('candidate_pairs', 0):,}</li>"
         f"<li>matched pairs: {payload.get('matched_pairs', 0):,}</li>"
+        "<li>match threshold: "
+        f"{payload.get('match_threshold_probability', 0.9)}</li>"
         f"<li>duplicate clusters: {payload.get('duplicate_clusters', 0)}</li>"
         "<li>records in duplicate groups: "
         f"{payload.get('records_in_duplicate_groups', 0)}</li>"

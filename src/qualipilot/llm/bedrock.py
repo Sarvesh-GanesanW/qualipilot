@@ -1,21 +1,13 @@
 """AWS Bedrock provider using the Converse API.
 
 We use Converse (not InvokeModel) because it unifies request shape
-across Provider, Meta, Mistral, etc. — so switching models is a
-config change, not a code change.
+across supported text models, so switching models is a config change.
 """
 
 from __future__ import annotations
 
 import logging
-from typing import Any, cast
-
-from tenacity import (
-    retry,
-    retry_if_exception_type,
-    stop_after_attempt,
-    wait_exponential,
-)
+from typing import Any
 
 from qualipilot.llm.base import LLMProvider
 from qualipilot.models.config import LLMConfig
@@ -39,9 +31,7 @@ class BedrockProvider(LLMProvider):
             ) from exc
 
         self._cfg = cfg
-        self._model_id = (
-            cfg.model or "provider.model-3-5-haiku-20241022-v1:0"
-        )
+        self._model_id = cfg.model
         session_kwargs: dict[str, Any] = {"region_name": cfg.region}
         if cfg.aws_profile:
             session_kwargs["profile_name"] = cfg.aws_profile
@@ -49,7 +39,10 @@ class BedrockProvider(LLMProvider):
 
         # adaptive retries + keep-alive pooling trims cold-start cost
         boto_config = BotoConfig(
-            retries={"max_attempts": 5, "mode": "adaptive"},
+            retries={
+                "total_max_attempts": cfg.retries + 1,
+                "mode": "adaptive",
+            },
             read_timeout=cfg.timeout_seconds,
             connect_timeout=10,
         )
@@ -61,38 +54,39 @@ class BedrockProvider(LLMProvider):
         ]
         system_blocks = [{"text": system}] if system else []
 
-        return self._converse_with_retry(messages, system_blocks)
+        return self._converse(messages, system_blocks)
 
-    @retry(
-        reraise=True,
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=1, max=20),
-        retry=retry_if_exception_type(
-            (RuntimeError, ConnectionError, TimeoutError)
-        ),
-    )
-    def _converse_with_retry(
+    def _converse(
         self,
         messages: list[dict[str, Any]],
         system_blocks: list[dict[str, Any]],
     ) -> str:
-        response = self._client.converse(
-            modelId=self._model_id,
-            messages=messages,
-            system=system_blocks,
-            inferenceConfig={
+        request: dict[str, Any] = {
+            "modelId": self._model_id,
+            "messages": messages,
+            "inferenceConfig": {
                 "maxTokens": self._cfg.max_tokens,
                 "temperature": self._cfg.temperature,
             },
-        )
+        }
+        if system_blocks:
+            request["system"] = system_blocks
+        response = self._client.converse(**request)
         self._log_usage(response)
         try:
-            text = response["output"]["message"]["content"][0]["text"]
-            return cast(str, text)
-        except (KeyError, IndexError) as exc:
-            raise RuntimeError(
-                f"unexpected bedrock response shape: {response!r}"
-            ) from exc
+            content = response["output"]["message"]["content"]
+            texts = [
+                block["text"]
+                for block in content
+                if isinstance(block, dict)
+                and isinstance(block.get("text"), str)
+                and block["text"]
+            ]
+            if not texts:
+                raise ValueError("response content is empty")
+            return "\n".join(texts)
+        except (KeyError, IndexError, TypeError, ValueError) as exc:
+            raise RuntimeError("unexpected bedrock response shape") from exc
 
     def _log_usage(self, response: dict[str, Any]) -> None:
         usage = response.get("usage") or {}

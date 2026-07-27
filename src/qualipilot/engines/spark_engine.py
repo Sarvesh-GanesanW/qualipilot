@@ -1,20 +1,20 @@
-"""PySpark engine.
-
-Spark is the right fit when your data already lives in a lakehouse
-(Delta, Iceberg, Hudi) and you have a cluster. On a laptop, DuckDB
-or Polars will be faster and less fiddly — see ``DuckDBEngine``.
-
-This file is import-light by design: pyspark is optional and loading
-it triggers a JVM boot. We defer every touch of ``pyspark`` to the
-first method call so the core install stays usable without Java.
-"""
+"""Optional PySpark engine."""
 
 from __future__ import annotations
 
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from qualipilot.engines.base import Engine
+from qualipilot.engines._file_formats import (
+    require_safe_remote_url,
+    require_unique_csv_columns,
+    require_valid_json_lines,
+)
+from qualipilot.engines.base import (
+    Engine,
+    reject_nested_columns,
+    validate_column_names,
+)
 
 if TYPE_CHECKING:  # keep the type checker happy without imports
     from pyspark.sql import DataFrame as SparkDataFrame
@@ -38,6 +38,15 @@ class SparkEngine(Engine):
     name = "spark"
 
     def __init__(self, df: SparkDataFrame) -> None:
+        validate_column_names(list(df.columns))
+        reject_nested_columns(
+            [
+                field.name
+                for field in df.schema.fields
+                if field.dataType.typeName()
+                in {"array", "map", "struct", "variant"}
+            ]
+        )
         self._df = df
 
     @classmethod
@@ -47,18 +56,17 @@ class SparkEngine(Engine):
         *,
         spark: SparkSession | None = None,
     ) -> SparkEngine:
-        """Build a Spark engine from a DataFrame, path, or Iceberg ref.
+        """Build a Spark engine from a DataFrame or file path.
 
         Args:
             data: one of
                 * a ``pyspark.sql.DataFrame`` (used directly)
-                * ``"iceberg://<catalog>.<db>.<table>"`` — loaded via
-                  the ``iceberg`` spark source
-                * ``"delta://<path>"``
                 * a plain path to Parquet / CSV / JSON
             spark: an existing SparkSession. If omitted we call
                 ``SparkSession.getOrCreate``.
         """
+        if isinstance(data, str | Path):
+            require_safe_remote_url(data)
         _require_spark()
         from pyspark.sql import DataFrame as SparkDataFrame
         from pyspark.sql import SparkSession
@@ -67,25 +75,49 @@ class SparkEngine(Engine):
 
         if isinstance(data, SparkDataFrame):
             return cls(data)
-        if isinstance(data, (str, Path)):
+        if isinstance(data, str | Path):
             raw = str(data)
-            if raw.startswith("iceberg://"):
-                ref = raw[len("iceberg://") :]
-                return cls(session.read.format("iceberg").load(ref))
-            if raw.startswith("delta://"):
-                ref = raw[len("delta://") :]
-                return cls(session.read.format("delta").load(ref))
             suffix = Path(raw).suffix.lower()
             if suffix in {".parquet", ".pq"}:
                 return cls(session.read.parquet(raw))
             if suffix == ".csv":
+                _require_local_text_path(raw)
+                require_unique_csv_columns(Path(raw))
                 return cls(
                     session.read.option("header", True)
                     .option("inferSchema", True)
+                    .option("mode", "FAILFAST")
                     .csv(raw)
                 )
-            if suffix in {".json", ".jsonl", ".ndjson"}:
-                return cls(session.read.json(raw))
+            if suffix in {".jsonl", ".ndjson"}:
+                _require_local_text_path(raw)
+                scalar_types = require_valid_json_lines(Path(raw))
+                from pyspark.sql.types import (
+                    BooleanType,
+                    DoubleType,
+                    LongType,
+                    StringType,
+                    StructField,
+                    StructType,
+                )
+
+                dtypes = {
+                    "string": StringType,
+                    "integer": LongType,
+                    "number": DoubleType,
+                    "boolean": BooleanType,
+                }
+                schema = StructType(
+                    [
+                        StructField(column, dtypes[family](), True)
+                        for column, family in scalar_types.items()
+                    ]
+                )
+                return cls(
+                    session.read.schema(schema)
+                    .option("mode", "FAILFAST")
+                    .json(raw)
+                )
             raise ValueError(f"unsupported file type: {suffix}")
         if type(data).__module__.startswith("pandas"):
             return cls(session.createDataFrame(data))
@@ -115,7 +147,7 @@ class SparkEngine(Engine):
         return [
             c
             for c, t in self.dtypes().items()
-            if any(t.startswith(x) for x in numeric)
+            if t.split("(", maxsplit=1)[0] in numeric
         ]
 
     def datetime_columns(self) -> list[str]:
@@ -130,19 +162,37 @@ class SparkEngine(Engine):
     def null_counts(self) -> dict[str, int]:
         from pyspark.sql import functions as F
 
-        exprs = [
-            F.sum(F.col(c).isNull().cast("int")).alias(c)
-            for c in self._df.columns
-        ]
+        dtypes = self.dtypes()
+        exprs = []
+        for column in self._df.columns:
+            value = _spark_col(column)
+            missing = value.isNull()
+            if dtypes[column] in {"float", "double"}:
+                missing = missing | F.isnan(value)
+            exprs.append(F.sum(missing.cast("int")).alias(column))
         row = self._df.agg(*exprs).collect()[0].asDict()
         return {c: int(row[c] or 0) for c in self._df.columns}
 
     def distinct_count(self, column: str) -> int:
+        return self.distinct_counts([column])[column]
+
+    def distinct_counts(self, columns: list[str]) -> dict[str, int]:
+        if not columns:
+            return {}
         from pyspark.sql import functions as F
 
-        return int(
-            self._df.agg(F.countDistinct(F.col(column))).collect()[0][0]
-        )
+        dtypes = self.dtypes()
+        expressions = []
+        for column in columns:
+            value = _spark_col(column)
+            valid = value.isNotNull()
+            if dtypes[column] in {"float", "double"}:
+                valid &= ~F.isnan(value)
+            expressions.append(
+                F.countDistinct(F.when(valid, value)).alias(column)
+            )
+        row = self._df.agg(*expressions).collect()[0].asDict()
+        return {column: int(row[column]) for column in columns}
 
     def top_values(
         self,
@@ -151,15 +201,24 @@ class SparkEngine(Engine):
     ) -> list[tuple[str, int]]:
         from pyspark.sql import functions as F
 
+        value_column = "__qualipilot_value__"
+        value = _spark_col(column)
+        valid = value.isNotNull()
+        if self.dtypes()[column] in {"float", "double"}:
+            valid = valid & ~F.isnan(value)
         rows = (
-            self._df.filter(F.col(column).isNotNull())
-            .groupBy(column)
+            self._df.filter(valid)
+            .select(value.alias(value_column))
+            .groupBy(value_column)
             .count()
-            .orderBy(F.col("count").desc())
+            .orderBy(
+                F.col("count").desc(),
+                F.col(value_column).cast("string").asc(),
+            )
             .limit(n)
             .collect()
         )
-        return [(str(r[0]), int(r[1])) for r in rows]
+        return [(str(row[value_column]), int(row["count"])) for row in rows]
 
     def quantiles(
         self,
@@ -168,33 +227,31 @@ class SparkEngine(Engine):
     ) -> dict[str, dict[float, float]]:
         if not columns or not qs:
             return {}
-        # approxQuantile is O(N) with a tight error bound — exact
-        # percentiles over a cluster would force a shuffle per col
+        # Preserve Spark's distributed approximate-quantile behavior.
         out: dict[str, dict[float, float]] = {c: {} for c in columns}
-        for col in columns:
-            vals = self._df.approxQuantile(col, list(qs), 0.001)
-            for q, v in zip(qs, vals, strict=True):
-                out[col][float(q)] = (
-                    float(v) if v is not None else float("nan")
-                )
-        return out
+        from pyspark.sql import functions as F
 
-    def describe(self) -> dict[str, dict[str, float]]:
-        numeric = self.numeric_columns()
-        if not numeric:
-            return {}
-        desc = self._df.select(*numeric).describe().collect()
-        out: dict[str, dict[str, float]] = {c: {} for c in numeric}
-        for row in desc:
-            stat = row["summary"]
-            for c in numeric:
-                val = row[c]
-                if val is None:
-                    continue
-                try:
-                    out[c][stat] = float(val)
-                except (TypeError, ValueError):
-                    continue
+        dtypes = self.dtypes()
+        aliases = [
+            f"__qualipilot_quantile_{index}__" for index in range(len(columns))
+        ]
+        expressions = []
+        for column, alias in zip(columns, aliases, strict=True):
+            value = _spark_col(column)
+            if dtypes[column] in {"float", "double"}:
+                value = F.when(F.isnan(value), F.lit(None)).otherwise(value)
+            expressions.append(value.alias(alias))
+        values = self._df.select(*expressions).approxQuantile(
+            aliases,
+            list(qs),
+            0.001,
+        )
+        for col, vals in zip(columns, values, strict=True):
+            for index, q in enumerate(qs):
+                value = vals[index] if index < len(vals) else None
+                out[col][float(q)] = (
+                    float(value) if value is not None else float("nan")
+                )
         return out
 
     # ---- filters ------------------------------------------------------
@@ -203,8 +260,15 @@ class SparkEngine(Engine):
         from pyspark.sql import functions as F
 
         cols = subset or self._df.columns
-        grouped = self._df.groupBy(*cols).count().filter(F.col("count") > 1)
-        return int(grouped.agg(F.sum("count")).collect()[0][0] or 0)
+        count_column = "__qualipilot_count__"
+        while count_column in self._df.columns:
+            count_column += "_"
+        grouped = (
+            self._df.groupBy(*[self._duplicate_key(c) for c in cols])
+            .agg(F.count("*").alias(count_column))
+            .filter(F.col(count_column) > 1)
+        )
+        return int(grouped.agg(F.sum(count_column)).collect()[0][0] or 0)
 
     def sample_duplicates(
         self,
@@ -215,31 +279,87 @@ class SparkEngine(Engine):
         from pyspark.sql import functions as F
 
         cols = subset or self._df.columns
-        window = Window.partitionBy(*cols)
+        count_column = "__qualipilot_count__"
+        while count_column in self._df.columns:
+            count_column += "_"
+        window = Window.partitionBy(*[self._duplicate_key(c) for c in cols])
         dupes = (
-            self._df.withColumn("_n", F.count("*").over(window))
-            .filter(F.col("_n") > 1)
-            .drop("_n")
+            self._df.withColumn(count_column, F.count("*").over(window))
+            .filter(F.col(count_column) > 1)
+            .drop(count_column)
             .limit(n)
         )
         return [r.asDict() for r in dupes.collect()]
 
     def count_outside(self, column: str, low: float, high: float) -> int:
+        return self.counts_outside({column: (low, high)})[column]
+
+    def counts_outside(
+        self,
+        ranges: dict[str, tuple[float, float]],
+    ) -> dict[str, int]:
+        if not ranges:
+            return {}
         from pyspark.sql import functions as F
 
-        c = F.col(column)
-        return int(self._df.filter((c < low) | (c > high)).count())
+        row = (
+            self._df.agg(
+                *(
+                    F.sum(
+                        self._outside_mask(column, low, high).cast("int")
+                    ).alias(column)
+                    for column, (low, high) in ranges.items()
+                )
+            )
+            .collect()[0]
+            .asDict()
+        )
+        return {column: int(row[column] or 0) for column in ranges}
 
     def sample_outside(
         self, column: str, low: float, high: float, n: int
     ) -> list[dict[str, Any]]:
-        from pyspark.sql import functions as F
-
-        c = F.col(column)
-        rows = self._df.filter((c < low) | (c > high)).limit(n)
+        rows = self._df.filter(self._outside_mask(column, low, high)).limit(n)
         return [r.asDict() for r in rows.collect()]
 
     def max_datetime(self, column: str) -> Any:
         from pyspark.sql import functions as F
 
-        return self._df.agg(F.max(column)).collect()[0][0]
+        return self._df.agg(F.max(_spark_col(column))).collect()[0][0]
+
+    def _outside_mask(self, column: str, low: float, high: float) -> Any:
+        from pyspark.sql import functions as F
+
+        value = _spark_col(column)
+        mask = (value < low) | (value > high)
+        if self.dtypes()[column] in {"float", "double"}:
+            mask &= ~F.isnan(value)
+        return mask
+
+    def _duplicate_key(self, column: str) -> Any:
+        from pyspark.sql import functions as F
+
+        value = _spark_col(column)
+        if self.dtypes()[column] in {"float", "double"}:
+            return F.when(F.isnan(value), F.lit(None)).otherwise(value)
+        return value
+
+
+def _spark_col(name: str) -> Any:
+    """Resolve a literal Spark column name, including dots/backticks."""
+    from pyspark.sql import functions as F
+
+    return F.col(_spark_identifier(name))
+
+
+def _require_local_text_path(path: str) -> None:
+    if "://" in path:
+        raise ValueError(
+            "Spark remote CSV and JSONL inputs are not supported because "
+            "their raw records cannot be validated; use Parquet or a local "
+            "text file"
+        )
+
+
+def _spark_identifier(name: str) -> str:
+    return f"`{name.replace('`', '``')}`"

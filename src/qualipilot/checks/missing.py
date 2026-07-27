@@ -18,7 +18,12 @@ class MissingValuesCheck(Check):
 
     def _execute(self, ctx: CheckContext) -> tuple[Severity, dict[str, Any]]:
         nulls = ctx.engine.null_counts()
-        total_rows = ctx.engine.row_count() or 1
+        row_count = (
+            ctx.row_count
+            if ctx.row_count is not None
+            else ctx.engine.row_count()
+        )
+        total_rows = row_count or 1
         total_nulls = sum(int(c) for c in nulls.values())
         worst = round(
             max(

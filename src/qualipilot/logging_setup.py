@@ -12,13 +12,19 @@ import os
 import sys
 from typing import Any
 
+_STRUCTURED_FIELDS = (
+    "check",
+    "duration_seconds",
+    "engine",
+    "output_path",
+    "report_format",
+    "severity",
+    "status",
+)
+
 
 class _JsonFormatter(logging.Formatter):
-    """Emit a single-line JSON record per log event.
-
-    keeps CloudWatch + Datadog happy without pulling in a heavy
-    logging dependency.
-    """
+    """Emit one JSON object per log event."""
 
     def format(self, record: logging.LogRecord) -> str:
         payload: dict[str, Any] = {
@@ -29,6 +35,9 @@ class _JsonFormatter(logging.Formatter):
         }
         if record.exc_info:
             payload["exc"] = self.formatException(record.exc_info)
+        for field_name in _STRUCTURED_FIELDS:
+            if hasattr(record, field_name):
+                payload[field_name] = getattr(record, field_name)
         return json.dumps(payload, default=str)
 
 
@@ -37,14 +46,13 @@ def configure_logging(
     *,
     json_logs: bool | None = None,
 ) -> None:
-    """Wire up the root logger once at process startup.
+    """Configure the ``qualipilot`` package logger.
 
     Args:
         level: Standard python log level name.
         json_logs: If None, auto-detect based on ``QUALIPILOT_JSON_LOGS``
             env var. Set explicitly when calling from tests.
     """
-    # auto-detect cloud envs so we do not have to pass flags around
     if json_logs is None:
         json_logs = os.environ.get("QUALIPILOT_JSON_LOGS", "").lower() in {
             "1",
@@ -52,12 +60,17 @@ def configure_logging(
             "yes",
         }
 
-    root = logging.getLogger()
-    # wipe existing handlers so repeated calls in notebooks stay clean
-    for existing in list(root.handlers):
-        root.removeHandler(existing)
+    level_name = level.upper()
+    numeric_level = logging.getLevelNamesMapping().get(level_name)
+    if numeric_level is None:
+        raise ValueError(f"unknown log level: {level}")
 
-    root.setLevel(level.upper())
+    package_logger = logging.getLogger("qualipilot")
+    for existing in list(package_logger.handlers):
+        if existing.get_name() == "qualipilot":
+            package_logger.removeHandler(existing)
+    package_logger.setLevel(numeric_level)
+    package_logger.propagate = False
 
     handler: logging.Handler
     if json_logs:
@@ -82,8 +95,5 @@ def configure_logging(
                 )
             )
 
-    root.addHandler(handler)
-    # silence noisy third-party loggers that pollute our output
-    logging.getLogger("botocore").setLevel(logging.WARNING)
-    logging.getLogger("urllib3").setLevel(logging.WARNING)
-    logging.getLogger("httpx").setLevel(logging.WARNING)
+    handler.set_name("qualipilot")
+    package_logger.addHandler(handler)

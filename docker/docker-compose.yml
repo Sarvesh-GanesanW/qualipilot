@@ -1,38 +1,47 @@
 services:
   ollama:
-    image: ollama/ollama:latest
-    container_name: qualipilot-ollama
+    image: ollama/ollama:0.32.4@sha256:10c13eb515db310990527d36ca14a136da4bcc0fbf2bf3b15e9c1f111e9d3cd4
     ports:
-      - "11434:11434"
+      - "127.0.0.1:11434:11434"
     volumes:
       - ollama-models:/root/.ollama
     healthcheck:
       test: ["CMD", "ollama", "list"]
       interval: 10s
       timeout: 5s
-      retries: 5
+      retries: 12
+      start_period: 10s
+    restart: unless-stopped
+
+  model:
+    image: ollama/ollama:0.32.4@sha256:10c13eb515db310990527d36ca14a136da4bcc0fbf2bf3b15e9c1f111e9d3cd4
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      OLLAMA_HOST: "http://ollama:11434"
+    volumes:
+      - ollama-models:/root/.ollama
+    entrypoint: ["ollama"]
+    command: ["pull", "qwen3:4b"]
+    restart: "no"
 
   qualipilot:
     build:
       context: ..
       dockerfile: docker/Dockerfile
       args:
-        EXTRAS: "bedrock"
-    image: qualipilot:latest
+        EXTRAS: "ollama"
+    image: qualipilot:dev
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
     depends_on:
-      ollama:
-        condition: service_healthy
+      model:
+        condition: service_completed_successfully
     environment:
       QUALIPILOT_JSON_LOGS: "1"
-      # uncomment to wire up bedrock from the host keychain
-      # AWS_PROFILE: ${AWS_PROFILE:-default}
-      # AWS_REGION: ${AWS_REGION:-us-east-1}
     volumes:
       - ../examples:/data:ro
-      - ./reports:/reports
-      # mount aws creds read-only so the container can assume your role
-      - ${HOME}/.aws:/home/qualipilot/.aws:ro
-    entrypoint: ["qualipilot"]
+      - ../reports:/reports
     command:
       - "check"
       - "/data/sample.csv"
@@ -44,8 +53,9 @@ services:
       - "ollama"
       - "--base-url"
       - "http://ollama:11434"
+      - "--allow-insecure-http"
       - "--model"
-      - "llama3.2:latest"
+      - "qwen3:4b"
 
 volumes:
   ollama-models:

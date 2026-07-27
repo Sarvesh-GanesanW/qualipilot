@@ -1,14 +1,13 @@
-"""Engine protocol — the contract every dataframe backend must meet.
-
-Keeping this thin deliberately: anything that can be answered by a
-``SELECT`` over a single logical table. Joins, stats beyond quantiles,
-and sampling policies live in individual checks, not here.
-"""
+"""Interface implemented by dataframe backends."""
 
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from typing import Any
+
+import pandas as pd
+import pyarrow as pa
 
 
 class Engine(ABC):
@@ -42,11 +41,15 @@ class Engine(ABC):
 
     @abstractmethod
     def null_counts(self) -> dict[str, int]:
-        """Return null count per column."""
+        """Return missing-value count per column (nulls and floating NaNs)."""
 
     @abstractmethod
     def distinct_count(self, column: str) -> int:
-        """Return distinct value count for ``column``."""
+        """Return distinct non-missing value count for ``column``."""
+
+    def distinct_counts(self, columns: list[str]) -> dict[str, int]:
+        """Return distinct non-missing value counts for ``columns``."""
+        return {column: self.distinct_count(column) for column in columns}
 
     @abstractmethod
     def top_values(
@@ -54,7 +57,7 @@ class Engine(ABC):
         column: str,
         n: int = 10,
     ) -> list[tuple[str, int]]:
-        """Return ``(value, count)`` pairs for the most common values."""
+        """Return common non-missing values with deterministic tie ordering."""
 
     @abstractmethod
     def quantiles(
@@ -62,7 +65,10 @@ class Engine(ABC):
         columns: list[str],
         qs: tuple[float, ...] = (0.25, 0.75),
     ) -> dict[str, dict[float, float]]:
-        """Return quantile values, computed in a single pass where possible.
+        """Return linear quantiles where the backend supports them.
+
+        Distributed engines may return deterministic approximations rather
+        than collecting the full column into driver memory.
 
         Args:
             columns: Numeric columns to profile.
@@ -72,10 +78,6 @@ class Engine(ABC):
             ``{column: {q: value}}``.
         """
 
-    @abstractmethod
-    def describe(self) -> dict[str, dict[str, float]]:
-        """Return pandas-style describe() per numeric column."""
-
     # ---- filters -------------------------------------------------------
 
     @abstractmethod
@@ -84,6 +86,7 @@ class Engine(ABC):
 
         Unlike partition-local duplicated counts, this must see every
         row globally to avoid under-counting on distributed engines.
+        Null and NaN are the same missing-value key.
         """
 
     @abstractmethod
@@ -103,6 +106,16 @@ class Engine(ABC):
     ) -> int:
         """Return row count where ``column`` falls outside ``[low, high]``."""
 
+    def counts_outside(
+        self,
+        ranges: dict[str, tuple[float, float]],
+    ) -> dict[str, int]:
+        """Return outside-range row counts for multiple columns."""
+        return {
+            column: self.count_outside(column, low, high)
+            for column, (low, high) in ranges.items()
+        }
+
     @abstractmethod
     def sample_outside(
         self,
@@ -116,3 +129,123 @@ class Engine(ABC):
     @abstractmethod
     def max_datetime(self, column: str) -> Any:
         """Return the max value of a datetime column, or None if empty."""
+
+
+def reject_nested_columns(columns: list[str]) -> None:
+    """Enforce the scalar-column contract shared by every engine."""
+    if columns:
+        names = ", ".join(sorted(columns))
+        raise TypeError(
+            "nested list, object, map, and struct columns are not supported; "
+            f"flatten these columns first: {names}"
+        )
+
+
+def validate_column_names(columns: Sequence[object]) -> None:
+    """Reject names that backends interpret inconsistently."""
+    if any(not isinstance(column, str) for column in columns):
+        raise ValueError("dataset column names must be strings")
+    names = [str(column) for column in columns]
+    try:
+        for name in names:
+            name.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        raise ValueError(
+            "dataset column names must contain valid Unicode"
+        ) from exc
+    if any("\0" in name for name in names):
+        raise ValueError("dataset column names must not contain NUL bytes")
+    if any(not name.strip() for name in names):
+        raise ValueError("dataset column names must not be blank")
+    if any(name != name.strip() for name in names):
+        raise ValueError(
+            "dataset column names must not have surrounding whitespace"
+        )
+    if len(names) != len({name.casefold() for name in names}):
+        raise ValueError("dataset column names must be unique ignoring case")
+
+
+def validate_pandas_columns(frame: pd.DataFrame) -> None:
+    """Reject Pandas values that portable engines interpret differently."""
+    validate_column_names(list(frame.columns))
+    reject_nested_columns(
+        [
+            column
+            for column in frame.columns
+            if is_nested_arrow_dtype(frame[column].dtype)
+            or (
+                pd.api.types.is_object_dtype(frame[column].dtype)
+                and not frame[column].map(pd.api.types.is_scalar).all()
+            )
+        ]
+    )
+    portable_object_families = {
+        "boolean",
+        "bytes",
+        "date",
+        "datetime",
+        "datetime64",
+        "decimal",
+        "empty",
+        "floating",
+        "integer",
+        "mixed-integer-float",
+        "string",
+        "time",
+        "timedelta",
+        "timedelta64",
+    }
+    unsupported: list[str] = []
+    for column, dtype in frame.dtypes.items():
+        if is_unsupported_pandas_dtype(dtype):
+            unsupported.append(f"{column} ({dtype})")
+        elif pd.api.types.is_object_dtype(dtype) or isinstance(
+            dtype, pd.CategoricalDtype
+        ):
+            values = (
+                frame[column].astype(object)
+                if isinstance(dtype, pd.CategoricalDtype)
+                else frame[column]
+            )
+            family = pd.api.types.infer_dtype(values, skipna=True)
+            if family not in portable_object_families:
+                unsupported.append(f"{column} ({dtype}/{family})")
+    if unsupported:
+        raise TypeError(
+            "unsupported pandas column types: "
+            + ", ".join(unsupported)
+            + "; cast them to a portable string, numeric, date, or "
+            "binary dtype"
+        )
+
+
+def is_unsupported_pandas_dtype(dtype: Any) -> bool:
+    """Return whether a Pandas dtype loses meaning in another engine."""
+    return pd.api.types.is_complex_dtype(dtype) or isinstance(
+        dtype,
+        (pd.PeriodDtype, pd.IntervalDtype, pd.SparseDtype),
+    )
+
+
+def is_nested_arrow_dtype(dtype: Any) -> bool:
+    """Return whether a pandas-compatible dtype wraps a nested Arrow type."""
+    arrow_dtype = getattr(dtype, "pyarrow_dtype", None)
+    return isinstance(arrow_dtype, pa.DataType) and pa.types.is_nested(
+        arrow_dtype
+    )
+
+
+def is_decimal_arrow_dtype(dtype: Any) -> bool:
+    """Return whether a pandas-compatible dtype wraps Arrow Decimal."""
+    arrow_dtype = getattr(dtype, "pyarrow_dtype", None)
+    return isinstance(arrow_dtype, pa.DataType) and pa.types.is_decimal(
+        arrow_dtype
+    )
+
+
+def is_date_arrow_dtype(dtype: Any) -> bool:
+    """Return whether a pandas-compatible dtype wraps an Arrow date."""
+    arrow_dtype = getattr(dtype, "pyarrow_dtype", None)
+    return isinstance(arrow_dtype, pa.DataType) and pa.types.is_date(
+        arrow_dtype
+    )

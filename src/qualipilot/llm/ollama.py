@@ -7,21 +7,19 @@ fake API key.
 
 from __future__ import annotations
 
-import logging
 from typing import Any
 
 import httpx
 from tenacity import (
-    retry,
-    retry_if_exception_type,
+    Retrying,
+    retry_if_exception,
     stop_after_attempt,
     wait_exponential,
 )
 
+from qualipilot.llm._http import is_retryable_http_error
 from qualipilot.llm.base import LLMProvider
 from qualipilot.models.config import LLMConfig
-
-logger = logging.getLogger(__name__)
 
 
 class OllamaProvider(LLMProvider):
@@ -34,7 +32,7 @@ class OllamaProvider(LLMProvider):
         if base.endswith("/v1"):
             base = base[: -len("/v1")]
         self._base = base
-        self._model = cfg.model or "llama3.2:latest"
+        self._model = cfg.model
 
     def generate(self, *, system: str, user: str) -> str:
         payload: dict[str, Any] = {
@@ -49,16 +47,14 @@ class OllamaProvider(LLMProvider):
                 "num_predict": self._cfg.max_tokens,
             },
         }
-        return self._chat(payload)
+        retrying = Retrying(
+            reraise=True,
+            stop=stop_after_attempt(self._cfg.retries + 1),
+            wait=wait_exponential(multiplier=1, min=1, max=15),
+            retry=retry_if_exception(is_retryable_http_error),
+        )
+        return str(retrying(self._chat, payload))
 
-    @retry(
-        reraise=True,
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=1, max=15),
-        retry=retry_if_exception_type(
-            (httpx.HTTPError, httpx.TimeoutException)
-        ),
-    )
     def _chat(self, payload: dict[str, Any]) -> str:
         url = f"{self._base}/api/chat"
         with httpx.Client(timeout=self._cfg.timeout_seconds) as client:
@@ -67,6 +63,6 @@ class OllamaProvider(LLMProvider):
             data = response.json()
         message = data.get("message") or {}
         content = message.get("content", "")
-        if not content:
-            raise RuntimeError(f"empty response from ollama: {data!r}")
-        return str(content)
+        if not isinstance(content, str) or not content:
+            raise RuntimeError("empty response from ollama")
+        return content
