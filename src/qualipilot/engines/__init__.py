@@ -1,14 +1,14 @@
 """Dataframe engine adapters.
 
-The checker orchestrator talks to an ``Engine`` protocol rather than a
-specific dataframe library. This keeps Polars (default), Pandas, Dask
-and cuDF swappable without touching check code.
+The checker orchestrator talks to an ``Engine`` interface rather than a
+specific dataframe library.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
+from qualipilot.engines._file_formats import require_safe_remote_url
 from qualipilot.engines.base import Engine
 from qualipilot.engines.pandas_engine import PandasEngine
 from qualipilot.engines.polars_engine import PolarsEngine
@@ -26,16 +26,16 @@ def build_engine(
     kind: str = "auto",
     *,
     npartitions: int = 4,
+    duckdb_threads: int | None = None,
 ) -> Engine:
     """Pick the right engine for the given input + requested backend.
 
     Args:
-        data: A pandas/polars/dask/cudf dataframe, or a file path.
-        kind: One of ``auto``, ``polars``, ``pandas``, ``dask``,
-            ``cudf``. ``auto`` inspects ``data`` and chooses the
-            lowest-overhead backend.
+        data: A supported dataframe or file path.
+        kind: Backend name. ``auto`` chooses from the input type.
         npartitions: Partition count passed to Dask when that engine is
             picked.
+        duckdb_threads: Optional per-connection DuckDB thread limit.
 
     Returns:
         A concrete ``Engine`` bound to the supplied dataframe.
@@ -45,6 +45,8 @@ def build_engine(
             ``data``.
         ImportError: If the optional backend package is missing.
     """
+    if isinstance(data, str):
+        require_safe_remote_url(data)
     resolved = _resolve_kind(data, kind)
 
     if resolved == "polars":
@@ -54,15 +56,11 @@ def build_engine(
     if resolved == "duckdb":
         from qualipilot.engines.duckdb_engine import DuckDBEngine
 
-        return DuckDBEngine.from_any(data)
+        return DuckDBEngine.from_any(data, threads=duckdb_threads)
     if resolved == "dask":
         from qualipilot.engines.dask_engine import DaskEngine
 
         return DaskEngine.from_any(data, npartitions=npartitions)
-    if resolved == "cudf":
-        from qualipilot.engines.cudf_engine import CudfEngine
-
-        return CudfEngine.from_any(data)
     if resolved == "spark":
         from qualipilot.engines.spark_engine import SparkEngine
 
@@ -80,16 +78,14 @@ def _resolve_kind(data: Any, kind: str) -> str:
     module = type(data).__module__
     if module.startswith("polars"):
         return "polars"
-    if module.startswith("cudf"):
-        return "cudf"
     if module.startswith("dask"):
         return "dask"
-    if module.startswith("duckdb"):
-        return "duckdb"
     if module.startswith("pyspark"):
         return "spark"
     if module.startswith("pandas"):
-        # default upgrade path, polars is faster for single-node
+        # Keep the automatic single-node path on the default backend.
+        return "polars"
+    if module.startswith("pyarrow"):
         return "polars"
     # strings/paths go through polars reader by default
     return "polars"

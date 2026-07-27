@@ -1,91 +1,97 @@
-"""Typed result models returned from every check.
-
-These models are the public contract: serialisable to JSON, safe to ship
-across process boundaries (Lambda, message queues), and stable enough
-for downstream dashboards to rely on.
-"""
+"""Serializable report models returned by the checker."""
 
 from __future__ import annotations
 
+import json
+import math
 from datetime import UTC, datetime
-from typing import Any, Literal
+from importlib.metadata import PackageNotFoundError, version
+from typing import Any, Literal, cast
 
-from pydantic import BaseModel, Field
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_validator,
+)
 
 Severity = Literal["ok", "warn", "error"]
+CheckStatus = Literal["completed", "failed"]
+LLMStatus = Literal["disabled", "completed", "failed"]
 
 
-class ColumnNullStat(BaseModel):
-    column: str
-    null_count: int
-    null_percentage: float
+def _package_version() -> str:
+    try:
+        return version("qualipilot")
+    except PackageNotFoundError:  # pragma: no cover - source-only imports
+        return "unknown"
 
 
-class DuplicateInfo(BaseModel):
-    total_duplicate_rows: int
-    subset: list[str] | None = None
-    sample: list[dict[str, Any]] = Field(default_factory=list)
+class _ResultModel(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+        allow_inf_nan=False,
+        ser_json_bytes="base64",
+    )
 
 
-class OutlierInfo(BaseModel):
-    column: str
-    lower_bound: float
-    upper_bound: float
-    outlier_count: int
-    sample: list[dict[str, Any]] = Field(default_factory=list)
-
-
-class RangeViolationInfo(BaseModel):
-    column: str
-    min_allowed: float
-    max_allowed: float
-    violation_count: int
-    sample: list[dict[str, Any]] = Field(default_factory=list)
-
-
-class CardinalityInfo(BaseModel):
-    column: str
-    distinct_count: int
-    top_values: list[tuple[str, int]] = Field(default_factory=list)
-
-
-class FreshnessInfo(BaseModel):
-    column: str
-    max_timestamp: datetime | None
-    max_age_hours: float
-    is_stale: bool
-
-
-class DatasetStats(BaseModel):
-    row_count: int
-    column_count: int
+class DatasetStats(_ResultModel):
+    row_count: int = Field(ge=0)
+    column_count: int = Field(ge=0)
     columns: list[str]
     dtypes: dict[str, str]
     engine: str
+    source: str | None = None
+    source_version: str | None = None
 
 
-class CheckResult(BaseModel):
+class CheckResult(_ResultModel):
     """Outcome of a single check.
 
-    ``payload`` carries the typed per-check info (one of the *Info
-    models above). It is kept as ``dict`` here so adding new checks
-    does not require expanding this class.
+    ``payload`` is JSON-normalized at construction so extension checks
+    cannot break report serialization.
     """
 
     name: str
     severity: Severity
-    duration_seconds: float
+    status: CheckStatus = "completed"
+    duration_seconds: float = Field(ge=0)
     payload: dict[str, Any] = Field(default_factory=dict)
     error: str | None = None
 
+    @field_validator("payload", mode="before")
+    @classmethod
+    def _make_payload_json_safe(cls, value: Any) -> dict[str, Any]:
+        normalized = json.loads(
+            json.dumps(_json_safe(value), default=str, allow_nan=False)
+        )
+        if not isinstance(normalized, dict):
+            raise ValueError("payload must be a JSON object")
+        return cast(dict[str, Any], normalized)
 
-class QualityReport(BaseModel):
+    @model_validator(mode="after")
+    def _validate_status(self) -> CheckResult:
+        if self.status == "failed" and not self.error:
+            raise ValueError("failed checks require an error")
+        if self.status == "completed" and self.error:
+            raise ValueError("completed checks cannot carry an error")
+        return self
+
+
+class QualityReport(_ResultModel):
     """Aggregate result of a full ``DataQualityChecker.run()`` call."""
 
+    schema_version: Literal["1.0"] = "1.0"
     generated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    package_version: str = Field(default_factory=_package_version)
     dataset: DatasetStats
     results: list[CheckResult]
     llm_report: str | None = None
+    llm_status: LLMStatus = "disabled"
+    llm_error: str | None = None
+    llm_provider: str | None = None
+    llm_model: str | None = None
     config_hash: str | None = None
 
     def to_json(self, *, indent: int = 2) -> str:
@@ -99,3 +105,13 @@ class QualityReport(BaseModel):
     def warning_checks(self) -> list[CheckResult]:
         """Checks that surfaced warnings but did not fail."""
         return [r for r in self.results if r.severity == "warn"]
+
+
+def _json_safe(value: Any) -> Any:
+    if isinstance(value, float) and not math.isfinite(value):
+        return str(value)
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, list | tuple):
+        return [_json_safe(item) for item in value]
+    return value

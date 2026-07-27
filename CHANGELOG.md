@@ -1,140 +1,56 @@
 # Changelog
 
-All notable changes to this project will be documented in this file.
-
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+This project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-### Added
-- `qualipilot.{yaml,yml}` and `.qualipilot.{yaml,yml}` are now
-  auto-discovered from the current working directory when no `-c`
-  flag is supplied. The chosen file is announced as `using config
-  from <path>` so users can see what's loaded. Pass `-c` to override.
-- Global `--quiet` / `-q` (sets log level to ERROR) and `--verbose`
-  / `-v` (sets log level to INFO) flags. Passing both errors out
-  with a clean Typer message.
-- Shell completion is now opt-in via `qualipilot --install-completion`
-  (Typer-provided). Previously the package set
-  `add_completion=False` and hid these knobs.
+## [3.0.0] - 2026-07-27
 
-## [2.0.1] — 2026-04-28
+### Breaking changes
 
-A maintenance release. No breaking API changes; the runtime behaviour
-of every public function is preserved unless explicitly noted. Mostly
-fixes for things the v2.0.0 wheel got wrong: a path-binding crash in
-the DuckDB engine, 35 latent `mypy --strict` errors despite shipping
-`py.typed`, an overpromising `Production/Stable` classifier, and a
-handful of CLI UX rough edges that turned every "Hello, qualipilot"
-moment into a 50-line Rich traceback.
-
-### Changed
-- Lowered `Development Status` classifier from `5 - Production/Stable`
-  to `4 - Beta`. Several engines (Spark, Dask, DuckDB) and the Lambda
-  handler ship without test coverage; the previous classifier
-  overpromised.
-- `qualipilot.linking.em.estimate_parameters` now returns a typed
-  `EMParams` (TypedDict). Callers that unpacked `params["m"]` etc. as
-  the old `dict[str, np.ndarray | float]` keep working — the keys are
-  identical — but they now get proper static types at use sites.
-- `Check._execute` abstract return type narrowed from `tuple[str, dict]`
-  to `tuple[Severity, dict]`. Subclasses now annotate severity
-  explicitly; mypy catches accidental returns of bogus severity strings.
-- CLI options `--engine`, `--format`, `--llm`, and `--fail-on` are now
-  proper `Choice` types rendered by Typer. Typos like `--engine polrs`
-  exit cleanly with a parameter error instead of crashing inside
-  `build_engine`. The accepted values stay identical.
-- `--llm` / `--model` help text now points users at sensible defaults
-  per provider, and warns that `--model` is usually required when
-  `--llm != none`.
-- `check` subcommand docstring switched from RST backticks to plain
-  prose so `--help` doesn't render literal `` ``input_path`` `` markers.
-- Markdown and HTML reports now surface the **affected columns** for
-  every check that has a per-column payload — not just a count.
-  - `missing_values` lists each column with nulls + percent.
-  - `outliers` shows the IQR bounds and outlier count per column.
-  - `ranges` shows the configured `[min, max]` and violation count.
-  - `cardinality` calls out constant columns by name.
-  - `freshness` shows max-timestamp and age for stale columns.
-  - `duplicates` includes a small sample table.
-  Outlier phrasing changed from "columns evaluated: 3" to "numeric
-  columns scanned: 3 (affected: 1)" — previous wording made it look
-  like only 3 of 6 columns were checked. HTML keeps the full raw JSON
-  payload available under a collapsed `<details>` block, so the audit
-  trail isn't lost.
+- Removed the untested cuDF engine and lakehouse loaders.
+- Removed the unused `Engine.describe()` method.
+- Removed the per-check result helper classes; payloads remain available on
+  `CheckResult.payload`.
+- Every enabled LLM provider now requires an explicit model.
+- Removed `--api-key`; use `QUALIPILOT_LLM__API_KEY` or a protected
+  configuration file.
+- Configuration files now require an explicit `--config` path.
+- Removed ambiguous array-oriented `.json` input; use JSONL/NDJSON.
+- Narrowed the Spark extra to the tested PySpark 4.2 series.
+- Replaced the Terraform `qualipilot_config_json` string with a validated
+  Lambda-safe `qualipilot_config` object.
 
 ### Added
-- `python -m qualipilot` entry point (`__main__.py`).
-- `qualipilot --version` flag (was `version` subcommand only).
-- This `CHANGELOG.md`.
-- `LinkConfig.em_random_seed` (default `0`). The polars and DuckDB
-  linkers both honour it, replacing the previously hardcoded seed.
-  Useful when you want deterministic-but-different sampling across
-  comparative trials.
-- `LLMConfig` now carries a per-provider temperature validator. Setting
-  `provider="bedrock"` with `temperature > 1.0` raises at config time;
-  Bedrock would otherwise 400 mid-run.
-- Test suite for `qualipilot.engines.duckdb_engine` (was 0% covered,
-  now 87%). Includes parity tests against polars/pandas for null counts,
-  duplicates, quantiles, `count_outside`; from-CSV round-trip; isolation
-  test for two engines in the same process.
-- Test suite for `qualipilot.reporting` (markdown + html) asserting
-  affected columns surface by name.
+
+- Dataset row, column, and dtype contracts.
+- Non-destructive linkage normalization plus deterministic survivor
+  selection, field merging, row consolidation, lineage, and conflict audits.
+- Input source, source version, package version, and configuration hash in
+  reports.
+- Exact-version S3 processing and deterministic terminal report keys in
+  Lambda.
+- Locked dependencies, cross-platform CI, release verification, Terraform
+  validation, dependency audits, and container smoke tests.
 
 ### Fixed
-- `LICENSE` now uses ASCII quotes; some packaging tools mis-detect the
-  Unicode smart quotes the previous file shipped with.
-- CI test job now installs `linking` and `duckdb` extras; previously
-  `tests/test_linking.py` imported `rapidfuzz` unconditionally and the
-  whole matrix red-failed on a `ModuleNotFoundError`.
-- 35 `mypy --strict` errors across `engines/duckdb_engine`,
-  `linking/em`, `linking/linker`, `linking/duckdb_linker`,
-  `engines/{pandas,dask,cudf}_engine`, `checks/{base,missing}`,
-  `llm/bedrock`, `logging_setup`, `lakehouse`, and `cli`. The package
-  now type-checks cleanly under strict mode, matching its
-  `Typing :: Typed` classifier and `py.typed` marker.
-- `DuckDBEngine.from_any` no longer crashes on file paths. Previously
-  it passed the path as a `?` parameter to `read_csv_auto` /
-  `read_parquet` / `read_json_auto`; DuckDB rejects parameters in those
-  table-function slots with "Unexpected prepared parameter". The fix
-  inlines the path with single-quote escaping to keep the call
-  injection-safe.
-- Missing optional dependencies no longer dump a 50-line Rich
-  traceback. `qualipilot link` without `[linking]` and
-  `qualipilot check --llm bedrock` without `[bedrock]` now show a
-  one-line `error: <msg>` and exit 2. The fix wraps `app()` in a `_run`
-  entry point that catches `ImportError`, escapes Rich markup so
-  `[linking]` / `[bedrock]` survive intact, and disables Typer's
-  pretty-exception rendering for genuine optional-dep failures.
-- CLI default log level is `WARNING` (was `INFO`). Old behaviour is one
-  flag away: `--log-level INFO`. Removes the wall of "running check:
-  ..." log lines new users used to see before the summary table.
-- The fuzzy linker raised a bare `ModuleNotFoundError: rapidfuzz`
-  inside a deep call stack when `[linking]` wasn't installed; it now
-  raises the same friendly `ImportError("install with ...[linking]")`
-  message we already use for boto3, dask, duckdb, etc.
-- `RangesCheck` now `warns` (not `ok`) when a configured range targets
-  a non-numeric column or a column missing from the dataset. Previously
-  these silently produced 0 violations and got masked under `severity:
-  ok`, hiding YAML typos like `column: status` with `[min: 0, max: 5]`.
 
-## [2.0.0] — 2026-04-27
+- Configuration precedence, secret redaction, and malformed-config errors.
+- Atomic report writes and format selection.
+- Dask duplicate and JSON handling.
+- DuckDB identifier quoting, null semantics, duplicate queries, and resource
+  cleanup.
+- Record-linkage validation, candidate limits, deterministic clustering, and
+  Polars/DuckDB comparison parity.
+- Lambda input validation, least-privilege IAM, retryable failure reports,
+  report retention, and cached-outcome metrics.
+- HTML and Markdown escaping for untrusted report content.
 
-### Added
-- First public PyPI release as `qualipilot`.
-- Pluggable dataframe engines: Polars (default), Pandas, Dask, cuDF,
-  DuckDB, Spark.
-- Pluggable LLM providers: AWS Bedrock (Converse API), Ollama,
-  OpenAI-compatible, plus a `none` provider.
-- In-house Fellegi-Sunter record linker with Polars blocking, rapidfuzz
-  string distance, numpy EM, and DuckDB-backed alternative path.
-- Typer CLI with `check` and `link` subcommands and severity-gate exit
-  codes (`--fail-on ok|warn|error`).
-- Pydantic v2 typed config + results, JSON/HTML/Markdown reports.
-- Docker, Terraform/Lambda, and GitHub Actions release workflow with
-  PyPI Trusted Publishing (OIDC, no tokens).
+## [2.0.1] - 2026-04-28
 
-### Notes
-- Renamed from `data-pilot-checker` / module `datapilot` because
-  `datapilot` was already taken on PyPI.
+- Corrected package metadata, CLI errors, DuckDB path handling, strict typing,
+  and report rendering.
+
+## [2.0.0] - 2026-04-27
+
+- First public `qualipilot` release.

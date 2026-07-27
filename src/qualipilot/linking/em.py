@@ -10,9 +10,8 @@ Notation used below:
     u[C, L]       P(level=l for comp c | pair is NOT a match)
     lam           prior P(pair is a match) after blocking
 
-Everything below is numpy-vectorised; there are no Python-per-pair
-loops. On 1M candidate pairs the whole EM run costs <100ms for the
-typical 3-5 comparison columns we expect in practice.
+The pair-wise probability work is NumPy-vectorised. The M-step uses
+one ``numpy.bincount`` call per comparison.
 """
 
 from __future__ import annotations
@@ -54,14 +53,22 @@ def estimate_parameters(
     Returns:
         Dict with keys ``m``, ``u`` (shape ``(C, L)``) and ``lambda``.
     """
-    n_pairs, n_comps = levels.shape
+    n_pairs = levels.shape[0]
     if n_pairs == 0:
         raise ValueError("no candidate pairs supplied to EM")
 
     max_levels = int(n_levels_per_comp.max())
-    # run the heavy work in float32 — halves memory, stays plenty
-    # precise for probability products in the 1e-6 ballpark
-    m_f64, u_f64 = _initialise(levels, n_levels_per_comp, max_levels)
+    informative = np.array(
+        [np.unique(column[column != 0]).size >= 2 for column in levels.T],
+        dtype=bool,
+    )
+    # Use float32 for the working probability tables to bound memory.
+    m_f64, u_f64 = _initialise(
+        levels,
+        n_levels_per_comp,
+        max_levels,
+        informative,
+    )
     m = m_f64.astype(np.float32)
     u = u_f64.astype(np.float32)
     lam = float(prior)
@@ -72,19 +79,29 @@ def estimate_parameters(
 
     prev_m = m.copy()
     prev_u = u.copy()
+    prev_lam = lam
 
     # levels.T is (C, N) — shape needed by take_along_axis over axis=1.
     # keep the transpose once outside the loop and gather from log
     # tables directly to skip the big np.log on the per-pair matrix.
     levels_t = levels.T.astype(np.int64)
+    observed = levels != 0
 
     for step in range(max_iter):
         log_m = np.log(m + _TINY, dtype=np.float32)
         log_u = np.log(u + _TINY, dtype=np.float32)
 
         # gather in log-space: N*C table lookups, no per-pair log calls
-        log_m_pair = np.take_along_axis(log_m, levels_t, axis=1).T
-        log_u_pair = np.take_along_axis(log_u, levels_t, axis=1).T
+        log_m_pair = np.where(
+            observed,
+            np.take_along_axis(log_m, levels_t, axis=1).T,
+            0.0,
+        )
+        log_u_pair = np.where(
+            observed,
+            np.take_along_axis(log_u, levels_t, axis=1).T,
+            0.0,
+        )
         log_m_product = log_m_pair.sum(axis=1)
         log_u_product = log_u_pair.sum(axis=1)
 
@@ -106,15 +123,16 @@ def estimate_parameters(
 
         # vector m-step: bincount per comparison is still the cleanest
         # path, and np.bincount is already C-optimised
-        for c in range(n_comps):
+        for c in np.flatnonzero(informative):
+            observed_rows = observed[:, c]
             counts_m = np.bincount(
-                levels[:, c],
-                weights=responsibilities,
+                levels[observed_rows, c],
+                weights=responsibilities[observed_rows],
                 minlength=max_levels,
             )
             counts_u = np.bincount(
-                levels[:, c],
-                weights=not_r,
+                levels[observed_rows, c],
+                weights=not_r[observed_rows],
                 minlength=max_levels,
             )
             m[c, :] = counts_m / (counts_m.sum() + _TINY)
@@ -126,9 +144,11 @@ def estimate_parameters(
         delta = max(
             float(np.abs(m - prev_m).max()),
             float(np.abs(u - prev_u).max()),
+            abs(lam - prev_lam),
         )
         prev_m = m.copy()
         prev_u = u.copy()
+        prev_lam = lam
 
         logger.debug("em step %d  lambda=%.6f  delta=%.6e", step, lam, delta)
         if delta < tol:
@@ -155,8 +175,17 @@ def score_pairs(
     log_m = np.log(m + _TINY, dtype=np.float32)
     log_u = np.log(u + _TINY, dtype=np.float32)
 
-    log_m_product = np.take_along_axis(log_m, levels_t, axis=1).T.sum(axis=1)
-    log_u_product = np.take_along_axis(log_u, levels_t, axis=1).T.sum(axis=1)
+    observed = levels != 0
+    log_m_product = np.where(
+        observed,
+        np.take_along_axis(log_m, levels_t, axis=1).T,
+        0.0,
+    ).sum(axis=1)
+    log_u_product = np.where(
+        observed,
+        np.take_along_axis(log_u, levels_t, axis=1).T,
+        0.0,
+    ).sum(axis=1)
 
     log_lam = float(np.log(lam + _TINY))
     log_1mlam = float(np.log(1.0 - lam + _TINY))
@@ -175,30 +204,35 @@ def _initialise(
     levels: np.ndarray,
     n_levels_per_comp: np.ndarray,
     max_levels: int,
+    informative: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Seed m/u with sensible priors.
 
     m gets most of its mass on the highest level (exact match is
-    typical for real matches). u follows the empirical frequency
-    over the candidate set.
+    typical for real matches). u follows the empirical non-null
+    frequency over the candidate set.
     """
     n_comps = levels.shape[1]
-    m = np.full((n_comps, max_levels), 1e-6, dtype=np.float64)
-    u = np.full((n_comps, max_levels), 1e-6, dtype=np.float64)
+    m = np.zeros((n_comps, max_levels), dtype=np.float64)
+    u = np.zeros((n_comps, max_levels), dtype=np.float64)
 
     for c in range(n_comps):
         top = int(n_levels_per_comp[c]) - 1
-        # m seed: 0.7 on top level, linearly decaying for lower ones
-        m[c, top] = 0.7
-        if top >= 1:
-            m[c, 1:top] = 0.25 / max(top - 1, 1)
-        m[c, 0] = 0.05  # null / missing rarely true-match
-
         counts = np.bincount(levels[:, c], minlength=max_levels).astype(
             np.float64
         )
-        total = counts.sum() + _TINY
-        u[c, :] = counts / total
+        counts[0] = 0
+        if not informative[c]:
+            if counts.sum() == 0:
+                counts[1 : top + 1] = 1
+            m[c, :] = counts
+            u[c, :] = counts
+            continue
+
+        # m seed: 0.7 on top level, linearly decaying for lower ones
+        m[c, top] = 0.7
+        m[c, 1:top] = 0.25 / max(top - 1, 1)
+        u[c, :] = counts
 
     mask = _build_level_mask(n_levels_per_comp, max_levels)
     m *= mask

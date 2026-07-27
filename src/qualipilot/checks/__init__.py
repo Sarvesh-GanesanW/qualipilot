@@ -12,13 +12,14 @@ from qualipilot.checks.linkage import LinkageCheck
 from qualipilot.checks.missing import MissingValuesCheck
 from qualipilot.checks.outliers import OutliersCheck
 from qualipilot.checks.ranges import RangesCheck
-from qualipilot.checks.types import DataTypesCheck
+from qualipilot.checks.types import DatasetContractCheck, DataTypesCheck
 
 __all__ = [
     "CardinalityCheck",
     "Check",
     "CheckContext",
     "DataTypesCheck",
+    "DatasetContractCheck",
     "DuplicatesCheck",
     "FreshnessCheck",
     "LinkageCheck",

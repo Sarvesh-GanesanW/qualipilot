@@ -1,15 +1,33 @@
-FROM public.ecr.aws/lambda/python:3.12
+FROM public.ecr.aws/lambda/python:3.12.2026.07.21.13-x86_64@sha256:bd4d4a227386990d6a9166820c5933e9fc8c03ae3c703f83b08854b61d8b6a0b AS builder
+
+ARG UV_VERSION=0.11.21
+
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
+    UV_PROJECT_ENVIRONMENT=/opt/venv
+
+WORKDIR /build
+
+RUN python -m pip install --no-cache-dir "uv==${UV_VERSION}"
+
+COPY pyproject.toml uv.lock README.md LICENSE ./
+COPY src ./src
+
+RUN uv sync --locked --no-dev --no-editable --extra bedrock
+
+FROM public.ecr.aws/lambda/python:3.12.2026.07.21.13-x86_64@sha256:bd4d4a227386990d6a9166820c5933e9fc8c03ae3c703f83b08854b61d8b6a0b
+
+ARG VCS_REF=unknown
+
+LABEL org.opencontainers.image.source="https://github.com/Sarvesh-GanesanW/dataqualitychecker" \
+      org.opencontainers.image.revision="${VCS_REF}" \
+      org.opencontainers.image.version="3.0.0"
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     QUALIPILOT_JSON_LOGS=1
 
-# keep this minimal — lambda pulls boto3 from the runtime so we only
-# install our own wheel and the bedrock extra
-COPY pyproject.toml README.md LICENSE ${LAMBDA_TASK_ROOT}/
-COPY src ${LAMBDA_TASK_ROOT}/src
-
-RUN pip install --no-cache-dir \
-    "${LAMBDA_TASK_ROOT}[bedrock]" --target "${LAMBDA_TASK_ROOT}"
+COPY --from=builder /opt/venv/lib/python3.12/site-packages/ ${LAMBDA_TASK_ROOT}/
 
 CMD ["qualipilot.lambda_handler.handler"]

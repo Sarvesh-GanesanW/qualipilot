@@ -1,14 +1,24 @@
-# one-click installer for qualipilot on windows powershell.
+# Install qualipilot from this checkout on Windows.
 #
 # usage:
-#     .\install.ps1              # core only
-#     .\install.ps1 -Extras bedrock
-#     .\install.ps1 -Extras dev
+#     .\install.ps1
+#     .\install.ps1 -Extras bedrock,linking,duckdb
 #     .\install.ps1 -Extras all
+#     .\install.ps1 -Dev
 [CmdletBinding()]
 param(
-    [ValidateSet("core","bedrock","ollama","openai","dask","all","dev")]
-    [string]$Extras = "core",
+    [ValidateSet(
+        "bedrock",
+        "dask",
+        "ollama",
+        "openai",
+        "linking",
+        "duckdb",
+        "spark",
+        "all"
+    )]
+    [string[]]$Extras = @(),
+    [switch]$Dev,
     [string]$PythonBin = "python",
     [string]$VenvDir = ".venv"
 )
@@ -16,43 +26,71 @@ param(
 $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
 
-if (-not (Get-Command $PythonBin -ErrorAction SilentlyContinue)) {
-    throw "python not found on PATH; install Python 3.11+ first"
+function Invoke-Checked {
+    param(
+        [Parameter(Mandatory)]
+        [string]$Command,
+        [Parameter(Mandatory)]
+        [string[]]$Arguments
+    )
+
+    & $Command @Arguments
+    if ($LASTEXITCODE -ne 0) {
+        throw "$Command failed with exit code $LASTEXITCODE"
+    }
 }
 
-if (-not (Test-Path $VenvDir)) {
-    Write-Host "creating venv at $VenvDir"
-    & $PythonBin -m venv $VenvDir
+if (-not (Get-Command $PythonBin -ErrorAction SilentlyContinue)) {
+    throw "$PythonBin not found; install Python 3.11-3.13 first"
+}
+
+Invoke-Checked -Command $PythonBin -Arguments @(
+    "-c",
+    "import sys; raise SystemExit(not ((3, 11) <= sys.version_info < (3, 14)))"
+)
+
+if (-not (Test-Path -LiteralPath $VenvDir -PathType Container)) {
+    Write-Host "creating virtual environment at $VenvDir"
+    Invoke-Checked -Command $PythonBin -Arguments @("-m", "venv", $VenvDir)
 }
 
 $activate = Join-Path $VenvDir "Scripts\Activate.ps1"
 . $activate
+Invoke-Checked -Command "python" -Arguments @(
+    "-c",
+    "import sys; raise SystemExit(not ((3, 11) <= sys.version_info < (3, 14)))"
+)
 
-python -m pip install --upgrade pip | Out-Null
-
-$useUv = Get-Command uv -ErrorAction SilentlyContinue
-if ($useUv) {
-    $installer = "uv pip install"
-} else {
-    Write-Host "uv not found; falling back to pip"
-    $installer = "python -m pip install"
+$selectedExtras = [System.Collections.Generic.List[string]]::new()
+foreach ($extra in $Extras) {
+    $selectedExtras.Add($extra)
 }
 
-switch ($Extras) {
-    "core" {
-        Invoke-Expression "$installer -e ."
-    }
-    "dev" {
-        Invoke-Expression "$installer -e `".[dev,all]`""
-        try { pre-commit install } catch { }
-    }
-    default {
-        Invoke-Expression "$installer -e `".[$Extras]`""
-    }
+if (-not (Get-Command "uv" -ErrorAction SilentlyContinue)) {
+    Write-Host "uv not found; installing uv 0.11.21"
+    Invoke-Checked -Command "python" -Arguments @(
+        "-m",
+        "pip",
+        "install",
+        "uv==0.11.21"
+    )
+}
+
+$syncArgs = @("sync", "--locked", "--active")
+if (-not $Dev) {
+    $syncArgs += @("--no-dev", "--no-editable")
+}
+foreach ($extra in $selectedExtras) {
+    $syncArgs += @("--extra", $extra)
+}
+Invoke-Checked -Command "uv" -Arguments $syncArgs
+
+if ($Dev) {
+    Invoke-Checked -Command "pre-commit" -Arguments @("install")
 }
 
 Write-Host ""
-Write-Host "installed. activate your shell with:"
-Write-Host "    .\$VenvDir\Scripts\Activate.ps1"
-Write-Host "then try:"
+Write-Host "installed. activate the environment with:"
+Write-Host "    . $activate"
+Write-Host "then run:"
 Write-Host "    qualipilot --help"

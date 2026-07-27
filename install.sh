@@ -1,74 +1,88 @@
 #!/usr/bin/env bash
-# One-click installer for qualipilot on macOS/Linux.
+# Install qualipilot from this checkout on macOS or Linux.
 #
 # usage:
-#     ./install.sh                # core only
-#     ./install.sh --bedrock      # adds boto3
-#     ./install.sh --all          # adds every optional dep
-#     ./install.sh --dev          # editable + dev + all extras
+#     ./install.sh
+#     ./install.sh --bedrock
+#     ./install.sh --linking --duckdb
+#     ./install.sh --all
+#     ./install.sh --dev
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "${ROOT_DIR}"
 
-EXTRAS="core"
+EXTRAS=()
+DEV_MODE=0
 for arg in "$@"; do
-    case "$arg" in
-        --bedrock)  EXTRAS="bedrock" ;;
-        --ollama)   EXTRAS="ollama" ;;
-        --openai)   EXTRAS="openai" ;;
-        --dask)     EXTRAS="dask" ;;
-        --all)      EXTRAS="all" ;;
-        --dev)      EXTRAS="dev" ;;
-        -h|--help)
-            grep "^#" "$0" | cut -c3-
+    case "${arg}" in
+        --bedrock) EXTRAS+=("bedrock") ;;
+        --dask) EXTRAS+=("dask") ;;
+        --ollama) EXTRAS+=("ollama") ;;
+        --openai) EXTRAS+=("openai") ;;
+        --linking) EXTRAS+=("linking") ;;
+        --duckdb) EXTRAS+=("duckdb") ;;
+        --spark) EXTRAS+=("spark") ;;
+        --all) EXTRAS=("all") ;;
+        --dev) DEV_MODE=1 ;;
+        -h | --help)
+            sed -n 's/^# \{0,1\}//p' "$0"
             exit 0
             ;;
         *)
-            echo "unknown flag: $arg"; exit 2
+            echo "unknown flag: ${arg}" >&2
+            exit 2
             ;;
     esac
 done
 
-# prefer uv when present; falls back to pip in a venv
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 if ! command -v "${PYTHON_BIN}" >/dev/null 2>&1; then
-    echo "python3 not found; install Python 3.11+ first"
+    echo "${PYTHON_BIN} not found; install Python 3.11-3.13 first" >&2
+    exit 1
+fi
+if ! "${PYTHON_BIN}" -c \
+    'import sys; raise SystemExit(not ((3, 11) <= sys.version_info < (3, 14)))'
+then
+    echo "qualipilot requires Python 3.11-3.13" >&2
     exit 1
 fi
 
 VENV_DIR="${VENV_DIR:-.venv}"
 if [[ ! -d "${VENV_DIR}" ]]; then
-    echo "creating venv at ${VENV_DIR}"
+    echo "creating virtual environment at ${VENV_DIR}"
     "${PYTHON_BIN}" -m venv "${VENV_DIR}"
 fi
 # shellcheck source=/dev/null
 source "${VENV_DIR}/bin/activate"
 
-python -m pip install --upgrade pip >/dev/null
-
-if command -v uv >/dev/null 2>&1; then
-    INSTALLER=(uv pip install)
-else
-    echo "uv not found; falling back to pip (slower)"
-    INSTALLER=(python -m pip install)
+if ! python -c \
+    'import sys; raise SystemExit(not ((3, 11) <= sys.version_info < (3, 14)))'
+then
+    echo "${VENV_DIR} uses an unsupported Python; recreate it" >&2
+    exit 1
 fi
 
-case "${EXTRAS}" in
-    core)
-        "${INSTALLER[@]}" -e .
-        ;;
-    dev)
-        "${INSTALLER[@]}" -e ".[dev,all]"
-        pre-commit install || true
-        ;;
-    *)
-        "${INSTALLER[@]}" -e ".[${EXTRAS}]"
-        ;;
-esac
+if ! command -v uv >/dev/null 2>&1; then
+    echo "uv not found; installing uv 0.11.21"
+    python -m pip install "uv==0.11.21"
+fi
+
+SYNC_ARGS=(sync --locked --active)
+if ((!DEV_MODE)); then
+    SYNC_ARGS+=(--no-dev --no-editable)
+fi
+for extra in "${EXTRAS[@]}"; do
+    SYNC_ARGS+=(--extra "${extra}")
+done
+uv "${SYNC_ARGS[@]}"
+
+if ((DEV_MODE)); then
+    pre-commit install
+fi
 
 echo
-echo "installed. activate your shell with:"
+echo "installed. activate the environment with:"
 echo "    source ${VENV_DIR}/bin/activate"
-echo "then try:"
+echo "then run:"
 echo "    qualipilot --help"

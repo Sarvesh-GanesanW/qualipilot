@@ -63,6 +63,11 @@ reports/
 *.tfstate.*
 *.tfvars
 !example.tfvars
+backend.hcl
+*.backend.hcl
+*.tfplan
+tfplan
+crash.log
 
 # docker
 .docker/

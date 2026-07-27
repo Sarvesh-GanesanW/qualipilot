@@ -1,221 +1,202 @@
 # qualipilot
 
-Production-grade data quality checker for Python. Runs structural and
-statistical checks on any tabular dataset (CSV / Parquet / JSON / Pandas /
-Polars / Dask / cuDF) and, optionally, asks an LLM — **AWS Bedrock**,
-**Ollama**, or any OpenAI-compatible endpoint — to narrate the findings.
+Qualipilot runs configurable checks over tabular data and returns typed
+JSON, HTML, or Markdown reports. It supports CSV, Parquet, JSONL, and NDJSON
+files plus several dataframe backends. Columns must contain scalar values;
+flatten nested arrays, maps, and objects before checking. LLM-generated
+narrative is optional and disabled by default.
 
-* swap engines with one flag (Polars default, Pandas/Dask/cuDF on demand)
-* swap LLM providers the same way (`--llm bedrock|ollama|openai|none`)
-* one-click install, docker-compose for local runs, terraform for Lambda
-* typed Pydantic results, deterministic JSON output, exit-code severity
-  gate for CI pipelines
-
----
+The project is beta software. Validate check semantics and performance
+against representative data before using report severities as a release
+gate.
 
 ## Install
 
-### One-click (recommended)
+Python 3.11-3.13 is supported.
 
 ```bash
-# macOS / Linux
-./install.sh --all        # core + every optional extra
-./install.sh --bedrock    # core + boto3
-./install.sh --dev        # editable + dev + pre-commit
-
-# Windows PowerShell
-.\install.ps1 -Extras all
+pip install qualipilot
+pip install "qualipilot[bedrock]"       # AWS Bedrock
+pip install "qualipilot[ollama]"        # Ollama
+pip install "qualipilot[openai]"        # OpenAI-compatible endpoint
+pip install "qualipilot[dask]"          # Dask engine
+pip install "qualipilot[duckdb]"        # DuckDB engine
+pip install "qualipilot[linking]"       # probabilistic linkage
+pip install "qualipilot[spark]"         # Spark engine
 ```
 
-### Manual
+From a source checkout, `./install.sh` and `.\install.ps1` create a local
+virtual environment. Pass `--dev` or `-Dev` for editable development
+installation. The `all` extra includes Spark; install only the extras you
+use when possible.
 
-```bash
-pip install qualipilot                 # core
-pip install "qualipilot[bedrock]"      # + boto3 for AWS Bedrock
-pip install "qualipilot[ollama]"       # + httpx (already core)
-pip install "qualipilot[dask]"         # + dask[dataframe]
-pip install "qualipilot[all]"          # everything except cuDF
-```
-
-cuDF (GPU) needs the RAPIDS conda channel — see
-[docs.rapids.ai/install](https://docs.rapids.ai/install).
-
----
-
-## Quickstart (CLI)
+## CLI
 
 ```bash
 qualipilot check data.csv \
-    --engine polars \
-    --range amount=0,100000 \
-    --output reports/data.quality.html \
-    --llm bedrock \
-    --model provider.model-3-5-haiku-20241022-v1:0 \
-    --region us-east-1 \
-    --fail-on warn
+  --engine polars \
+  --range amount=0,100000 \
+  --output reports/data.quality.html \
+  --fail-on warn
 ```
 
-* `--output` can be `.json`, `.html`, or `.md`; format is inferred.
-* `--fail-on {ok,warn,error}` decides when the CLI returns a non-zero
-  exit code — wire it straight into CI.
-* All flags have `--config` equivalents; see `examples/config.yaml`.
+`--output` supports `.json`, `.html`, and `.md`. `--fail-on` returns a
+nonzero exit code when a result reaches the selected severity, which makes
+the command suitable for CI gates. Run `qualipilot check --help` for the
+complete option set.
 
-## Quickstart (Python)
+Configuration can also be stored in YAML or JSON:
+
+```bash
+qualipilot check examples/sample.csv --config examples/config.yaml
+```
+
+See [examples/config.yaml](https://github.com/Sarvesh-GanesanW/dataqualitychecker/blob/main/examples/config.yaml)
+for the configuration model. CLI-only controls such as `--fail-on` are not
+configuration fields. The sample deliberately contains range and freshness
+failures, so this command demonstrates the default nonzero quality gate.
+
+## Python
 
 ```python
 import pandas as pd
+
 from qualipilot import DataQualityChecker, QualipilotConfig
-from qualipilot.models.config import CheckConfig, ColumnRange, LLMConfig
+from qualipilot.models.config import CheckConfig, ColumnRange
 
-df = pd.read_csv("orders.csv")
-
+frame = pd.read_csv("orders.csv")
 config = QualipilotConfig(
     engine="polars",
     checks=CheckConfig(
-        column_ranges={"amount": ColumnRange(min=0, max=100_000)},
-    ),
-    llm=LLMConfig(
-        provider="bedrock",
-        model="provider.model-3-5-haiku-20241022-v1:0",
-        region="us-east-1",
+        column_ranges={"amount": ColumnRange(min=0, max=100_000)}
     ),
 )
 
-report = DataQualityChecker(df, config).run()
+with DataQualityChecker(frame, config) as checker:
+    report = checker.run()
 print(report.to_json())
-print(report.llm_report)
 ```
 
----
+The context manager releases engine-owned resources such as DuckDB
+connections. Dataframes and externally supplied Spark sessions remain owned
+by the caller.
 
-## What it checks
+## Checks
 
-| Check | Default | Description |
-|---|---|---|
-| `missing_values` | on  | per-column null counts + percentage |
-| `duplicates`     | on  | global duplicate rows (subset-aware) |
-| `data_types`     | on  | dtype rollup per column |
-| `outliers`       | on  | IQR rule, Q1/Q3 computed in one pass |
-| `ranges`         | on  | user-supplied `[min, max]` per column |
-| `cardinality`    | on  | distinct count + top-10 values |
-| `freshness`      | off | max-timestamp vs `freshness_max_age_hours` |
+| Check | Default | Purpose |
+|---|---:|---|
+| `missing_values` | on | null counts and percentages |
+| `duplicates` | on | duplicate rows, optionally over a subset |
+| `data_types` | on | column dtype inventory |
+| `outliers` | on | numeric IQR outliers |
+| `ranges` | on | configured numeric bounds |
+| `cardinality` | on | distinct counts and optional top values |
+| `freshness` | off | timestamp age and future timestamps |
+| `linkage` | off | configured probabilistic duplicate detection |
 
-Each check returns a typed `CheckResult` with severity `ok / warn /
-error`, a duration, a JSON-safe payload, and any captured exception.
-
----
+Each check produces a `CheckResult` with an `ok`, `warn`, or `error`
+severity, execution status, duration, and JSON-safe payload.
 
 ## Engines
 
-| Engine | When to use |
-|---|---|
-| `polars` (default) | in-memory data up to ~10 GB — 8× faster than pandas |
-| `pandas`  | legacy integrations that need pandas-native output |
-| `dask`    | larger-than-memory data or multi-worker clusters |
-| `cudf`    | single-node GPU acceleration (RAPIDS required) |
-
-`--engine auto` inspects the input object and picks the fastest safe
-backend (Polars for single-node, Dask for already-Dask frames, cuDF
-when a GPU frame is handed in).
-
----
-
-## LLM providers
-
-| Provider | `--llm` | Required |
+| Engine | Extra | Notes |
 |---|---|---|
-| None (default) | `none` | nothing |
-| AWS Bedrock (Converse API) | `bedrock` | `boto3`, IAM `bedrock:Converse` |
-| Ollama | `ollama` | running ollama server |
-| OpenAI-compatible | `openai` | base URL + API key |
+| Polars | core | default for paths and ordinary in-memory frames |
+| Pandas | core | explicit pandas execution |
+| DuckDB | `duckdb` | SQL-backed execution |
+| Dask | `dask` | partitioned dataframe execution |
+| Spark | `spark` | requires a working Java/Spark environment |
 
-Bedrock uses the **Converse API**, so the same code path works for
-Provider Model, Meta Llama, Mistral, Cohere, etc. — you just change
-`model=...`.
+`engine="auto"` selects by input type; paths and pandas frames currently
+resolve to Polars. Backend parity is covered by tests, but memory use and
+runtime depend on file format, check mix, and data distribution. Use the
+scripts in `scripts/` to measure your own workload.
 
----
+## Optional LLM reporting
 
-## Deploy
+Available providers are `bedrock`, `ollama`, and `openai` (for compatible
+Chat Completions endpoints). The provider receives a compact summary of the
+quality report: column names and dtypes, aggregate check metrics, and check
+execution status. Input paths, source versions, exception messages, row
+samples, and top values are excluded. Keep the default `none` for fully
+local checks.
 
-### Docker (local Ollama stack)
-
-```bash
-docker compose -f docker/docker-compose.yml up --build
-```
-
-This brings up `ollama` and a `qualipilot` container wired to it, and
-runs the sample check end-to-end.
-
-### AWS Lambda (container image)
+Bedrock requires an explicit, currently available model ID:
 
 ```bash
-cd deploy/terraform
-terraform init
-terraform apply -var project=qualipilot -var aws_profile=sre-tea
-
-# build + push the image to the ECR repo terraform just made
-aws ecr get-login-password | docker login --username AWS --password-stdin \
-    $(terraform output -raw ecr_repository_url | cut -d/ -f1)
-docker build -f ../../docker/Dockerfile.lambda -t qualipilot-lambda:latest ../..
-docker tag qualipilot-lambda:latest "$(terraform output -raw ecr_repository_url):latest"
-docker push "$(terraform output -raw ecr_repository_url):latest"
-
-aws lambda update-function-code \
-    --function-name qualipilot \
-    --image-uri "$(terraform output -raw ecr_repository_url):latest"
+qualipilot check data.csv \
+  --llm bedrock \
+  --model "$BEDROCK_MODEL_ID" \
+  --region us-east-1
 ```
 
-Invoke with:
+The caller needs `bedrock:InvokeModel` for the selected foundation model or
+inference profile. Model availability and identifiers vary by account and
+region; do not bake a sample ID into long-lived configuration.
+
+For a local Ollama example:
 
 ```bash
-aws lambda invoke \
-    --function-name qualipilot \
-    --payload '{"s3_uri":"s3://my-bucket/events.parquet"}' \
-    response.json
+mkdir -p reports
+export HOST_UID="$(id -u)" HOST_GID="$(id -g)"
+docker compose -f docker/docker-compose.yml build qualipilot
+docker compose -f docker/docker-compose.yml run --rm qualipilot
+docker compose -f docker/docker-compose.yml down
 ```
 
-Report lands at `s3://my-bucket/reports/events.quality.json`.
+The compose stack binds Ollama only to `127.0.0.1`, pulls the configured
+model before the check starts, and does not mount cloud credentials.
 
----
+## Record linkage
 
-## Development
-
-```bash
-./install.sh --dev
-make lint typecheck test
-```
-
-* Ruff for lint + format, MyPy in strict mode, pytest with coverage.
-* Pre-commit runs the same locally before every commit.
-* `pytest -m integration` runs tests that need real AWS/Bedrock credentials.
-
----
-
-## Record linkage / probabilistic dedup
-
-Beyond exact duplicates, qualipilot ships an in-house Fellegi-Sunter
-linker — no external splink dependency. Polars blocking, rapidfuzz
-string distance, numpy EM. 1M rows in ~10 s on a laptop.
+Install the `linking` extra and provide explicit blocking and comparison
+rules:
 
 ```bash
 qualipilot link customers.csv \
-    --id customer_id \
-    --compare "name:fuzzy:0.92,0.75" \
-    --compare "postcode:exact" \
-    --block "postcode" \
-    --threshold 0.9
+  --id customer_id \
+  --compare "name:fuzzy:0.92,0.75" \
+  --compare "postcode:exact" \
+  --block "postcode" \
+  --threshold 0.9 \
+  --survivor-sort "updated_at:desc" \
+  --output reports/customers.linkage.json \
+  --deduplicated-output customers.deduplicated.parquet
 ```
 
-Full details: [`docs/LINKING.md`](docs/LINKING.md).
+String match keys are normalized for Unicode, case, and whitespace by
+default. The cleaned output contains one survivor per cluster, fills missing
+fields from duplicate records, and is accompanied by lineage and a
+metadata-only audit written last as a commit marker. Consumers should verify
+its output SHA-256 before reading the cleaned file. Blocking, thresholds,
+survivor ranking, and conflict resolution remain domain-specific. Review
+[the linkage guide](https://github.com/Sarvesh-GanesanW/dataqualitychecker/blob/main/docs/LINKING.md)
+before using clusters operationally.
 
-## Docs
+## Deployment and development
 
-* [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — module layout + data flow
-* [`docs/LINKING.md`](docs/LINKING.md) — probabilistic dedup / linkage
-* [`docs/DEEP_DIVE.md`](docs/DEEP_DIVE.md) — audit of the v1 codebase
-* [`docs/DEPLOY.md`](docs/DEPLOY.md) — cloud + on-prem deployment notes
-* [`docs/MIGRATION.md`](docs/MIGRATION.md) — upgrading from v1.x
-* [`docs/RUST_CONVERSION.md`](docs/RUST_CONVERSION.md) — should we port to Rust? (tldr: hybrid, not rewrite)
+The repository includes locked Docker builds and a Terraform module for an
+S3-triggered Lambda deployment. The module deploys an ECR image by digest,
+limits Lambda reads to `incoming/`, writes reports below `reports/`, and
+routes exhausted asynchronous invocations to SQS. Follow
+[the deployment guide](https://github.com/Sarvesh-GanesanW/dataqualitychecker/blob/main/docs/DEPLOY.md);
+the first apply intentionally creates the ECR repository before Lambda.
+
+```bash
+./install.sh --dev
+make check
+```
+
+CI runs Ruff, strict MyPy, tests with coverage, dependency audit, package
+build/smoke tests, Terraform validation and mock-plan tests, installer
+parsing, and container smoke tests.
+
+Additional documentation:
+
+- [Architecture](https://github.com/Sarvesh-GanesanW/dataqualitychecker/blob/main/docs/ARCHITECTURE.md)
+- [Deployment](https://github.com/Sarvesh-GanesanW/dataqualitychecker/blob/main/docs/DEPLOY.md)
+- [Migrating from 2.x](https://github.com/Sarvesh-GanesanW/dataqualitychecker/blob/main/docs/MIGRATION.md)
+- [Changelog](https://github.com/Sarvesh-GanesanW/dataqualitychecker/blob/main/CHANGELOG.md)
 
 ## License
 

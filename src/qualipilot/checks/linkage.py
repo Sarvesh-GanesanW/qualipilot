@@ -25,12 +25,15 @@ class LinkageCheck(Check):
         link_cfg = ctx.config.linkage
         if link_cfg is None:
             return "ok", {"skipped": True}
+        if link_cfg.mode != "dedupe":
+            raise ValueError(
+                "LinkageCheck supports dedupe mode only; use RecordLinker "
+                "directly for two-table linkage"
+            )
 
         # deferred import so the core install stays slim
         from qualipilot.linking import RecordLinker
 
-        # engine-agnostic: always pull a polars frame for the linker.
-        # the per-engine cost is tiny compared with the linkage run.
         pl_df = _engine_to_polars(ctx.engine)
         result = RecordLinker(pl_df, link_cfg).run()
         summary = result.summary()
@@ -62,13 +65,7 @@ def _engine_to_polars(engine: Any) -> Any:
         import polars as pl
 
         return pl.from_pandas(engine._df)
-    # dask / cudf — round-trip via pandas
-    import polars as pl
-
-    underlying = engine._df
-    materialised = (
-        underlying.compute()
-        if hasattr(underlying, "compute")
-        else underlying.to_pandas()
+    raise ValueError(
+        "LinkageCheck supports polars and pandas engines only; "
+        "distributed/GPU conversion would collect the full dataset"
     )
-    return pl.from_pandas(materialised)

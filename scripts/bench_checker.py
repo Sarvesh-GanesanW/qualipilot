@@ -27,7 +27,7 @@ def log(msg: str) -> None:
         f.write(msg + "\n")
 
 
-def build(n: int) -> "pl.DataFrame":
+def build(n: int) -> pl.DataFrame:
     rng = np.random.default_rng(7)
     return pl.DataFrame(
         {
@@ -40,15 +40,11 @@ def build(n: int) -> "pl.DataFrame":
     )
 
 
-def run(
-    df: "pl.DataFrame", engine: str, size: int
-) -> None:
+def run(df: pl.DataFrame, engine: str, size: int) -> None:
     cfg = QualipilotConfig(
         engine=engine,  # type: ignore[arg-type]
         checks=CheckConfig(
-            column_ranges={
-                "amount": ColumnRange(min=-100, max=500)
-            }
+            column_ranges={"amount": ColumnRange(min=-100, max=500)}
         ),
     )
     input_frame = df.to_pandas() if engine == "pandas" else df
@@ -57,8 +53,7 @@ def run(
     report = DataQualityChecker(input_frame, cfg).run()
     ms = (time.perf_counter() - start) * 1000
     per_check = {
-        r.name: round(r.duration_seconds * 1000, 2)
-        for r in report.results
+        r.name: round(r.duration_seconds * 1000, 2) for r in report.results
     }
     log(
         f"n={size:>7,}  engine={engine:>7}  total={ms:>7.1f}ms  "
@@ -74,16 +69,18 @@ def main() -> None:
         f"polars={pl.__version__} numpy={np.__version__}"
     )
 
+    failed = False
     for n in [10_000, 100_000, 500_000]:
         df = build(n)
         for engine in ["polars", "pandas", "duckdb"]:
             try:
                 run(df, engine, n)
             except Exception as exc:
-                log(
-                    f"n={n:>7,}  engine={engine:>7}  FAILED: {exc}"
-                )
+                failed = True
+                log(f"n={n:>7,}  engine={engine:>7}  FAILED: {exc}")
         gc.collect()
+    if failed:
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

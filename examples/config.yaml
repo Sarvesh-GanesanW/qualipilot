@@ -4,7 +4,6 @@
 
 engine: polars
 report_format: json
-log_level: INFO
 
 checks:
   missing_values: true
@@ -26,9 +25,10 @@ checks:
 
 llm:
   provider: none
-  # switch to bedrock for production:
+  # To enable Bedrock, copy this file and supply a model available in
+  # your account and region:
   # provider: bedrock
-  # model: provider.model-3-5-haiku-20241022-v1:0
+  # model: your-bedrock-model-id
   # region: us-east-1
   # aws_profile: sre-tea
   temperature: 0.2

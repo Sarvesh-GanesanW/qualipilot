@@ -17,6 +17,10 @@ SAMPLE = Path(__file__).parent / "sample.csv"
 
 
 def main() -> None:
+    model_id = os.environ.get("BEDROCK_MODEL_ID")
+    if not model_id:
+        raise SystemExit("set BEDROCK_MODEL_ID to an available model")
+
     config = QualipilotConfig(
         engine="polars",
         checks=CheckConfig(
@@ -26,7 +30,7 @@ def main() -> None:
         ),
         llm=LLMConfig(
             provider="bedrock",
-            model="provider.model-3-5-haiku-20241022-v1:0",
+            model=model_id,
             region=os.environ.get("AWS_REGION", "us-east-1"),
             aws_profile=os.environ.get("AWS_PROFILE"),
             max_tokens=1500,

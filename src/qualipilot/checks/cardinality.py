@@ -1,9 +1,4 @@
-"""Cardinality / uniqueness profile.
-
-Helps spot accidentally-constant columns and highly categorical ones
-that should be bucketed. Reports distinct count plus the top-10 values
-for every column.
-"""
+"""Cardinality and optional value-frequency checks."""
 
 from __future__ import annotations
 
@@ -17,17 +12,26 @@ class CardinalityCheck(Check):
     name = "cardinality"
 
     def _execute(self, ctx: CheckContext) -> tuple[Severity, dict[str, Any]]:
-        total_rows = ctx.engine.row_count() or 1
+        row_count = (
+            ctx.row_count
+            if ctx.row_count is not None
+            else ctx.engine.row_count()
+        )
+        total_rows = row_count or 1
         report: list[dict[str, Any]] = []
         any_constant = False
 
-        for col in ctx.engine.columns():
-            try:
-                distinct = ctx.engine.distinct_count(col)
-            except Exception:  # pragma: no cover
-                # some engines fail on nested dtypes, we log + move on
-                continue
-            top = ctx.engine.top_values(col, n=10)
+        columns = (
+            ctx.columns if ctx.columns is not None else ctx.engine.columns()
+        )
+        distinct_counts = ctx.engine.distinct_counts(columns)
+        for col in columns:
+            distinct = distinct_counts[col]
+            top = (
+                ctx.engine.top_values(col, n=10)
+                if ctx.config.include_top_values
+                else []
+            )
             if distinct <= 1 and total_rows > 1:
                 any_constant = True
             report.append(

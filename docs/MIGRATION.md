@@ -1,52 +1,71 @@
-# Migration from v1.x
+# Migrating from 2.x to 3.0
 
-v2 is a major rewrite. The package name on PyPI is unchanged
-(`qualipilot`), but the Python API, CLI, and configuration
-are new. The old v1 code lives on the `v1` git tag if you need it.
+Version 3 removes APIs that were untested or unused and tightens configuration
+at trust boundaries.
 
-## Quick translation
+## Result payload classes
 
-| v1 call | v2 replacement |
-|---|---|
-| `DataQualityChecker(df)` | `DataQualityChecker(df, QualipilotConfig())` |
-| `checker.set_llm_api_key("ollama")` | `QualipilotConfig(llm=LLMConfig(provider="ollama", ...))` |
-| `run_all_checks(column_ranges={...}, llm_model="qwen2:7b")` | `DataQualityChecker(df, QualipilotConfig(checks=CheckConfig(column_ranges={...}), llm=LLMConfig(provider="ollama", model="qwen2:7b"))).run()` |
-| `checker.save_results(result, "x.json")` | `checker.save(report, "x.json")` — or set `QualipilotConfig.output_path` |
-| `checker.visualize_outliers(...)` | removed; pull samples from `report.results[i].payload['per_column']` and plot with your tool of choice |
+The following public models were removed:
 
-## Behavioural changes to expect
+- `ColumnNullStat`
+- `DuplicateInfo`
+- `OutlierInfo`
+- `RangeViolationInfo`
+- `CardinalityInfo`
+- `FreshnessInfo`
 
-1. **Dask duplicates are now global**, not per-partition. Existing
-   reports may surface more duplicates than before.
-2. **Outlier quantiles use a single pass** per run; results match v1
-   within float rounding.
-3. **Logs are JSON** when `QUALIPILOT_JSON_LOGS=1` or `--json-logs`.
-   Colours are opt-in via the Rich handler.
-4. **LLM client is synchronous**. v1's async call path was never
-   properly leveraged (we always awaited exactly one response);
-   removing the async overhead simplifies error handling.
-5. **Checks never print**. All output is on the returned
-   `QualityReport`. Add a reporter (HTML/MD/JSON) or render it
-   yourself.
+Check data remains in `CheckResult.payload` with the same check-specific field
+names. Read it from the matching result:
 
-## Upgrading a CI pipeline
-
-Before:
-
-```bash
-python -m data_quality_checker_script data.csv  # custom wrapper
+```python
+missing = next(
+    result for result in report.results if result.name == "missing_values"
+)
+for column in missing.payload["per_column"]:
+    print(column["column"], column["null_count"])
 ```
 
-After:
+Applications that need a stable typed projection should validate the payload
+with an application-owned Pydantic model or `TypedDict`.
 
-```yaml
-- name: data quality
-  run: |
-    qualipilot check data.csv \
-        --config quality.yaml \
-        --output reports/data.quality.html \
-        --fail-on warn
-```
+`CheckResult.payload` remains intentionally untyped and may gain new
+check-specific fields in compatible releases.
 
-The non-zero exit code on `warn` severity lets CI block merges
-without you parsing JSON by hand.
+## Engines and loaders
+
+- `Engine.describe()` was removed because the checker never used it. Use the
+  native dataframe API for exploratory statistics.
+- The cuDF adapter was removed. Convert supported inputs to Polars or Pandas
+  before running the checker.
+- `qualipilot.lakehouse` and the `iceberg`/`delta` extras were removed. Load
+  those tables with their maintained client or Spark, then pass the resulting
+  dataframe to Qualipilot.
+- DuckDB relations are no longer accepted as inputs because adapting them
+  forced eager materialization. Pass a supported file path, Arrow table,
+  Pandas dataframe, or Polars dataframe.
+- Array-oriented `.json` inputs were removed because backend parsers disagreed
+  on their row model and required eager loading. Use `.jsonl` or `.ndjson`,
+  with one object per line.
+- The optional Spark engine now targets PySpark 4.2.x, the version exercised
+  by CI. Keep an older Qualipilot release if a Spark 3.5 runtime is mandatory.
+
+## Configuration and CLI
+
+- Configuration files are loaded only with `--config`; working-directory
+  discovery was removed to prevent implicit network calls and file writes.
+- Enabled LLM providers require an explicit model.
+- `--api-key` was removed to keep secrets out of process listings. Use
+  `QUALIPILOT_LLM__API_KEY` or a protected explicit config file.
+- Config-file logging fields were removed. Use global CLI logging flags or
+  `QUALIPILOT_LOG_LEVEL` and `QUALIPILOT_JSON_LOGS`.
+- The Terraform deployment input `qualipilot_config_json` was replaced by
+  the typed HCL object `qualipilot_config`. Remove `jsonencode` and JSON
+  string quoting from Terraform callers. The object exposes only
+  Lambda-supported settings and accepts only `UTC` for
+  `checks.freshness_timezone`.
+
+## Reports
+
+Reports now include a schema version, package version, source provenance,
+check execution status, and structured LLM failure status. Consumers should
+ignore unknown fields and gate on `schema_version`.

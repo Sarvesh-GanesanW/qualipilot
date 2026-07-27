@@ -25,23 +25,43 @@ class OutliersCheck(Check):
         qmap = ctx.engine.quantiles(numeric, qs=(0.25, 0.75))
         k = ctx.config.outlier_iqr_multiplier
 
-        report: list[dict[str, Any]] = []
-        any_outliers = False
+        bounds: dict[str, tuple[float, float]] = {}
+        skipped: set[str] = set()
         for col in numeric:
             q1 = qmap[col][0.25]
             q3 = qmap[col][0.75]
             if _is_nan(q1) or _is_nan(q3):
-                # constant or empty column, nothing to flag
                 continue
             iqr = q3 - q1
             low = q1 - k * iqr
             high = q3 + k * iqr
-            count = ctx.engine.count_outside(col, low, high)
+            if not all(map(math.isfinite, (q1, q3, low, high))):
+                skipped.add(col)
+                continue
+            bounds[col] = (low, high)
+        counts = ctx.engine.counts_outside(bounds)
+
+        report: list[dict[str, Any]] = []
+        any_outliers = False
+        for col in numeric:
+            if col in skipped:
+                any_outliers = True
+                report.append(
+                    {
+                        "column": col,
+                        "skipped": "non-finite quantile bounds",
+                    }
+                )
+                continue
+            if col not in bounds:
+                continue
+            low, high = bounds[col]
+            count = counts[col]
             sample = (
                 ctx.engine.sample_outside(
                     col, low, high, ctx.config.sample_size
                 )
-                if count
+                if count and ctx.config.sample_size
                 else []
             )
             if count:
