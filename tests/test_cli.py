@@ -12,6 +12,7 @@ from pathlib import Path
 import polars as pl
 import pytest
 import typer
+from click import unstyle
 from typer.testing import CliRunner
 
 from qualipilot.cli import (
@@ -30,6 +31,10 @@ from qualipilot.models.config import LLMConfig
 from qualipilot.models.results import CheckResult, DatasetStats, QualityReport
 
 runner = CliRunner()
+
+
+def _plain_output(output: str) -> str:
+    return " ".join(unstyle(output).split())
 
 
 def test_version() -> None:
@@ -157,8 +162,7 @@ def test_invalid_range_is_a_cli_error(tmp_csv: Path) -> None:
     )
 
     assert result.exit_code != 0
-    combined = result.output
-    assert "invalid --range" in combined
+    assert "invalid --range" in _plain_output(result.output)
 
 
 def test_repeated_range_columns_are_rejected(tmp_csv: Path) -> None:
@@ -346,7 +350,7 @@ def test_deduplicated_output_requires_an_audit_path(
     )
 
     assert result.exit_code == 2
-    assert "requires --output" in result.output
+    assert "requires --output" in _plain_output(result.output)
 
 
 @pytest.mark.parametrize(
