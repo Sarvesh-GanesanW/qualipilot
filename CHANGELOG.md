@@ -42,8 +42,13 @@ This project follows [Semantic Versioning](https://semver.org/).
   cleanup.
 - Record-linkage validation, candidate limits, deterministic clustering, and
   Polars/DuckDB comparison parity.
+- Singleton-heavy consolidation no longer performs one dataframe slice per
+  cluster.
 - Lambda input validation, least-privilege IAM, retryable failure reports,
   report retention, and cached-outcome metrics.
+- Reproducible Lambda image builds now include pinned Amazon Linux security
+  updates.
+- PyPI publishing now isolates OIDC credentials from build and test steps.
 - HTML and Markdown escaping for untrusted report content.
 
 ## [2.0.1] - 2026-04-28
