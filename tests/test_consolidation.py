@@ -227,38 +227,63 @@ def test_deduplicate_validates_consolidation_before_linking(
         )
 
 
-def test_singleton_clusters_skip_merge_work(
+@pytest.mark.parametrize(
+    ("cluster_size", "expected_rank_calls", "expected_frame_reads"),
+    [(1, 0, 1), (2, 1, 0)],
+)
+def test_clusters_avoid_per_record_frame_access(
     monkeypatch: pytest.MonkeyPatch,
+    cluster_size: int,
+    expected_rank_calls: int,
+    expected_frame_reads: int,
 ) -> None:
     frame = pl.DataFrame(
         {
-            "id": list(range(5_000)),
-            "name": [f"record-{index}" for index in range(5_000)],
+            "id": list(range(1_000)),
+            "priority": [index % 2 for index in range(1_000)],
+            "value": [f"value-{index}" for index in range(1_000)],
         }
     )
+    original_rank = consolidate_module._rank_records
+    original_getitem = pl.DataFrame.__getitem__
+    rank_calls = 0
+    frame_reads = 0
 
-    def fail_if_ranked(*args: object, **kwargs: object) -> None:
-        raise AssertionError("singletons do not need survivor ranking")
+    def count_rank_calls(*args: object, **kwargs: object) -> pl.DataFrame:
+        nonlocal rank_calls
+        rank_calls += 1
+        return original_rank(*args, **kwargs)
 
-    monkeypatch.setattr(
-        consolidate_module,
-        "_rank_cluster",
-        fail_if_ranked,
-    )
+    def count_frame_reads(
+        dataframe: pl.DataFrame,
+        item: object,
+    ) -> object:
+        nonlocal frame_reads
+        frame_reads += 1
+        return original_getitem(dataframe, item)
+
+    def fail_if_row_read(*args: object, **kwargs: object) -> None:
+        raise AssertionError("records must not be read one at a time")
+
+    monkeypatch.setattr(consolidate_module, "_rank_records", count_rank_calls)
+    monkeypatch.setattr(pl.DataFrame, "__getitem__", count_frame_reads)
+    monkeypatch.setattr(pl.DataFrame, "row", fail_if_row_read)
 
     result = consolidate_records(
         frame,
         id_column="id",
-        clusters={index: index for index in range(5_000)},
+        clusters={index: index // cluster_size for index in range(1_000)},
         config=ConsolidationConfig(
-            completeness_columns=("name",),
-            merge_rules={"name": MergeRule(strategy="most_frequent")},
+            sort_keys=(SurvivorSortKey(column="priority", descending=True),),
+            completeness_columns=("value",),
+            merge_rules={"value": MergeRule(strategy="most_frequent")},
         ),
     )
 
-    assert result.frame.equals(frame)
-    assert result.audit == ()
-    assert result.removed_count == 0
+    assert rank_calls == expected_rank_calls
+    assert frame_reads == expected_frame_reads
+    assert result.frame.height == 1_000 // cluster_size
+    assert result.removed_count == 1_000 - result.frame.height
 
 
 def test_singleton_latest_rule_still_requires_order_value() -> None:
@@ -312,6 +337,35 @@ def test_donor_ties_use_survivor_order_then_unique_id() -> None:
         "latest": "winner",
         "observed": 2,
     }
+
+
+def test_latest_respects_enum_order() -> None:
+    frame = pl.DataFrame(
+        {
+            "id": [1, 2],
+            "value": ["first", "second"],
+            "observed": pl.Series(
+                ["z", "a"],
+                dtype=pl.Enum(["z", "a"]),
+            ),
+        }
+    )
+
+    result = consolidate_records(
+        frame,
+        id_column="id",
+        clusters={1: 0, 2: 0},
+        config=ConsolidationConfig(
+            merge_rules={
+                "value": MergeRule(
+                    strategy="latest",
+                    order_by="observed",
+                )
+            }
+        ),
+    )
+
+    assert result.frame.get_column("value").item() == "second"
 
 
 def test_missing_sort_values_rank_after_present_values() -> None:

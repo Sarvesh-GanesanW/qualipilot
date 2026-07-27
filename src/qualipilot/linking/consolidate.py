@@ -6,6 +6,7 @@ import math
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from decimal import Decimal
+from itertools import groupby
 from typing import Any, Literal
 
 import polars as pl
@@ -199,61 +200,93 @@ def consolidate_records(
     if frame.is_empty():
         return ConsolidationResult(frame.clone(), {}, ())
 
+    record_ids = frame.get_column(id_column).to_list()
+    cluster_ids = [clusters[record_id] for record_id in record_ids]
+    ordered_cluster_ids = sorted(set(cluster_ids))
+    if len(ordered_cluster_ids) == len(record_ids):
+        return _singleton_result(
+            frame,
+            record_ids=record_ids,
+            cluster_ids=cluster_ids,
+        )
+
     completeness_column = _unused_name(
         frame.columns,
         "__consolidation_completeness__",
     )
-    record_ids = frame.get_column(id_column).to_list()
-    cluster_ids = [clusters[record_id] for record_id in record_ids]
-    positions: dict[int, list[int]] = {}
-    for position, cluster_id in enumerate(cluster_ids):
-        positions.setdefault(cluster_id, []).append(position)
+    cluster_column = _unused_name(
+        [*frame.columns, completeness_column],
+        "__consolidation_cluster__",
+    )
+    cluster_order = {
+        cluster_id: position
+        for position, cluster_id in enumerate(ordered_cluster_ids)
+    }
+    ranked = _rank_records(
+        frame.with_columns(
+            pl.Series(
+                cluster_column,
+                [cluster_order[cluster_id] for cluster_id in cluster_ids],
+                dtype=pl.UInt64,
+            )
+        ),
+        id_column=id_column,
+        cluster_column=cluster_column,
+        config=config,
+        completeness_column=completeness_column,
+    )
+    latest_order_ranks = _latest_order_ranks(frame, config)
 
     rows: list[dict[str, Any]] = []
     audit: list[ConsolidationAudit] = []
     survivors: dict[int, object] = {}
-    for cluster_id in sorted(set(cluster_ids)):
-        cluster_positions = positions[cluster_id]
-        if len(cluster_positions) == 1:
-            survivor = frame.row(cluster_positions[0], named=True)
-            survivors[cluster_id] = survivor[id_column]
-            rows.append(survivor)
-            continue
-        cluster = frame[cluster_positions, :]
-        ranked = _rank_cluster(
-            cluster,
-            id_column=id_column,
-            config=config,
-            completeness_column=completeness_column,
-        )
-        survivor = ranked.row(0, named=True)
+    ranked_groups = groupby(
+        ranked.iter_rows(named=True),
+        key=lambda row: row[cluster_column],
+    )
+    for cluster_position, group in ranked_groups:
+        cluster_id = ordered_cluster_ids[cluster_position]
+        ranked_rows = list(group)
+        survivor = ranked_rows[0]
         survivor_id = survivor[id_column]
         survivors[cluster_id] = survivor_id
+        if len(ranked_rows) == 1:
+            rows.append({column: survivor[column] for column in frame.columns})
+            continue
         consolidated = {column: survivor[column] for column in frame.columns}
 
         for column in frame.columns:
             if column == id_column:
                 continue
             rule = config.merge_rules.get(column, _SURVIVOR_RULE)
+            dtype = frame.schema[column]
+            present = [
+                row
+                for row in ranked_rows
+                if not _value_is_filter_missing(row[column], dtype)
+            ]
+            value_groups = _group_values(
+                (row[id_column], row[column]) for row in present
+            )
             donor_id, value = _select_value(
-                ranked,
+                ranked_rows,
+                present,
+                value_groups,
                 id_column=id_column,
                 column=column,
                 rule=rule,
+                schema=frame.schema,
+                latest_order_ranks=latest_order_ranks,
             )
             previous = survivor[column]
             changed = not _values_equal(
                 previous,
                 value,
-                frame.schema[column],
+                dtype,
             )
             if changed:
                 consolidated[column] = value
 
-            present = ranked.filter(
-                _is_present(column, frame.schema[column])
-            ).select([id_column, column])
-            value_groups = _group_values(present.iter_rows())
             distinct_count = len(value_groups)
             if changed or distinct_count > 1:
                 audit.append(
@@ -265,27 +298,48 @@ def consolidate_records(
                         action=_audit_action(
                             previous,
                             changed=changed,
-                            dtype=frame.schema[column],
+                            dtype=dtype,
                         ),
                         donor_id=donor_id,
                         distinct_value_count=distinct_count,
                         conflicting_source_ids=(
-                            tuple(
-                                source_id
-                                for source_id, _value in present.iter_rows()
-                            )
+                            tuple(row[id_column] for row in present)
                             if distinct_count > 1
                             else ()
                         ),
                     )
                 )
+            del present, value_groups
         rows.append(consolidated)
+        del ranked_rows
 
+    del latest_order_ranks, ranked_groups, ranked
     output = _build_output(rows, frame.schema)
-    lineage = {
-        record_id: survivors[clusters[record_id]] for record_id in record_ids
-    }
-    return ConsolidationResult(output, lineage, tuple(audit))
+    return ConsolidationResult(
+        output,
+        {
+            record_id: survivors[clusters[record_id]]
+            for record_id in record_ids
+        },
+        tuple(audit),
+    )
+
+
+def _singleton_result(
+    frame: pl.DataFrame,
+    *,
+    record_ids: list[object],
+    cluster_ids: list[int],
+) -> ConsolidationResult:
+    output = frame[
+        sorted(range(len(record_ids)), key=cluster_ids.__getitem__),
+        :,
+    ]
+    return ConsolidationResult(
+        output,
+        {record_id: record_id for record_id in record_ids},
+        (),
+    )
 
 
 def _validate_input(
@@ -403,31 +457,38 @@ def _validate_clusters(
         raise ValueError("cluster IDs must be non-negative integers")
 
 
-def _rank_cluster(
-    cluster: pl.DataFrame,
+def _rank_records(
+    frame: pl.DataFrame,
     *,
     id_column: str,
+    cluster_column: str,
     config: ConsolidationConfig,
     completeness_column: str,
 ) -> pl.DataFrame:
     columns: list[str | pl.Expr] = [
-        _null_missing_values(key.column, cluster.schema[key.column])
-        for key in config.sort_keys
+        cluster_column,
+        *[
+            _null_missing_values(key.column, frame.schema[key.column])
+            for key in config.sort_keys
+        ],
     ]
-    descending = [key.descending for key in config.sort_keys]
+    descending = [
+        False,
+        *(key.descending for key in config.sort_keys),
+    ]
     if config.completeness_columns:
         completeness = pl.sum_horizontal(
             *[
-                _is_present(column, cluster.schema[column]).cast(pl.UInt32)
+                _is_present(column, frame.schema[column]).cast(pl.UInt32)
                 for column in config.completeness_columns
             ]
         ).alias(completeness_column)
-        cluster = cluster.with_columns(completeness)
+        frame = frame.with_columns(completeness)
         columns.append(completeness_column)
         descending.append(True)
     columns.append(id_column)
     descending.append(False)
-    return cluster.sort(
+    return frame.sort(
         columns,
         descending=descending,
         nulls_last=True,
@@ -436,44 +497,77 @@ def _rank_cluster(
 
 
 def _select_value(
-    ranked: pl.DataFrame,
+    ranked: list[dict[str, Any]],
+    present: list[dict[str, Any]],
+    groups: list[list[tuple[object, Any]]],
     *,
     id_column: str,
     column: str,
     rule: MergeRule,
+    schema: pl.Schema,
+    latest_order_ranks: Mapping[str, dict[Any, int]],
 ) -> tuple[object, Any]:
-    survivor = ranked.row(0, named=True)
-    if rule.strategy == "survivor":
-        return survivor[id_column], survivor[column]
-
-    present = ranked.filter(_is_present(column, ranked.schema[column]))
-    if present.is_empty():
+    survivor = ranked[0]
+    if rule.strategy == "survivor" or not present:
         return survivor[id_column], survivor[column]
     if rule.strategy == "first_non_null":
-        donor = present.row(0, named=True)
+        donor = present[0]
         return donor[id_column], donor[column]
     if rule.strategy == "most_frequent":
-        groups = _group_values(present.select([id_column, column]).iter_rows())
         donor_id, value = max(groups, key=len)[0]
         return donor_id, value
 
     order_by = rule.order_by
     if order_by is None:  # guarded by MergeRule validation
         raise AssertionError("latest merge rule is missing order_by")
-    unclear = present.filter(_is_missing(order_by, ranked.schema[order_by]))
-    if not unclear.is_empty():
-        ids = unclear.get_column(id_column).to_list()
+    unclear = [
+        row[id_column]
+        for row in present
+        if _value_is_filter_missing(row[order_by], schema[order_by])
+    ]
+    if unclear:
         raise ValueError(
             f"latest merge for {column!r} requires non-missing "
-            f"{order_by!r} values for source IDs: {ids}"
+            f"{order_by!r} values for source IDs: {unclear}"
         )
-    donor = present.sort(
-        order_by,
-        descending=True,
-        nulls_last=True,
-        maintain_order=True,
-    ).row(0, named=True)
+    ranks = latest_order_ranks[order_by]
+    donor = max(present, key=lambda row: ranks[row[order_by]])
     return donor[id_column], donor[column]
+
+
+def _latest_order_ranks(
+    frame: pl.DataFrame,
+    config: ConsolidationConfig,
+) -> dict[str, dict[Any, int]]:
+    order_columns = {
+        rule.order_by
+        for rule in config.merge_rules.values()
+        if rule.strategy == "latest" and rule.order_by is not None
+    }
+    ranks: dict[str, dict[Any, int]] = {}
+    for column in order_columns:
+        ordered = (
+            frame.filter(_is_present(column, frame.schema[column]))
+            .select(column)
+            .unique(maintain_order=True)
+            .sort(column)
+            .get_column(column)
+            .to_list()
+        )
+        ranks[column] = {
+            value: position for position, value in enumerate(ordered)
+        }
+    return ranks
+
+
+def _value_is_filter_missing(value: Any, dtype: pl.DataType) -> bool:
+    if value is None:
+        return True
+    if dtype.is_float():
+        return isinstance(value, float) and math.isnan(value)
+    if dtype.base_type() in {pl.String, pl.Categorical, pl.Enum}:
+        return isinstance(value, str) and not value.strip()
+    return False
 
 
 def _group_values(
