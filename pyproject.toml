@@ -85,9 +85,9 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/Sarvesh-GanesanW/dataqualitychecker"
-Repository = "https://github.com/Sarvesh-GanesanW/dataqualitychecker"
-Issues = "https://github.com/Sarvesh-GanesanW/dataqualitychecker/issues"
+Homepage = "https://github.com/Sarvesh-GanesanW/qualipilot"
+Repository = "https://github.com/Sarvesh-GanesanW/qualipilot"
+Issues = "https://github.com/Sarvesh-GanesanW/qualipilot/issues"
 
 [project.scripts]
 qualipilot = "qualipilot.cli:_run"

@@ -8,7 +8,7 @@ major releases are unsupported.
 ## Reporting a vulnerability
 
 Use the repository's
-[private vulnerability reporting](https://github.com/Sarvesh-GanesanW/dataqualitychecker/security/advisories/new).
+[private vulnerability reporting](https://github.com/Sarvesh-GanesanW/qualipilot/security/advisories/new).
 Do not open a public issue for an undisclosed vulnerability.
 
 Include the affected version, reproduction steps, impact, and any suggested

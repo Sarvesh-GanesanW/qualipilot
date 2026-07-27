@@ -20,7 +20,7 @@ FROM amazon/aws-lambda-python:3.12.2026.07.26.12-x86_64@sha256:7f3e45f36ea435ef0
 
 ARG VCS_REF=unknown
 
-LABEL org.opencontainers.image.source="https://github.com/Sarvesh-GanesanW/dataqualitychecker" \
+LABEL org.opencontainers.image.source="https://github.com/Sarvesh-GanesanW/qualipilot" \
       org.opencontainers.image.revision="${VCS_REF}" \
       org.opencontainers.image.version="3.0.0"
 

@@ -27,7 +27,7 @@ FROM python:3.12.13-slim-bookworm@sha256:8a7e7cc04fd3e2bd787f7f24e22d5d119aa590d
 
 ARG VCS_REF=unknown
 
-LABEL org.opencontainers.image.source="https://github.com/Sarvesh-GanesanW/dataqualitychecker" \
+LABEL org.opencontainers.image.source="https://github.com/Sarvesh-GanesanW/qualipilot" \
       org.opencontainers.image.revision="${VCS_REF}" \
       org.opencontainers.image.version="3.0.0"
 

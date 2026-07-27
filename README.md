@@ -51,7 +51,7 @@ Configuration can also be stored in YAML or JSON:
 qualipilot check examples/sample.csv --config examples/config.yaml
 ```
 
-See [examples/config.yaml](https://github.com/Sarvesh-GanesanW/dataqualitychecker/blob/main/examples/config.yaml)
+See [examples/config.yaml](https://github.com/Sarvesh-GanesanW/qualipilot/blob/main/examples/config.yaml)
 for the configuration model. CLI-only controls such as `--fail-on` are not
 configuration fields. The sample deliberately contains range and freshness
 failures, so this command demonstrates the default nonzero quality gate.
@@ -170,7 +170,7 @@ fields from duplicate records, and is accompanied by lineage and a
 metadata-only audit written last as a commit marker. Consumers should verify
 its output SHA-256 before reading the cleaned file. Blocking, thresholds,
 survivor ranking, and conflict resolution remain domain-specific. Review
-[the linkage guide](https://github.com/Sarvesh-GanesanW/dataqualitychecker/blob/main/docs/LINKING.md)
+[the linkage guide](https://github.com/Sarvesh-GanesanW/qualipilot/blob/main/docs/LINKING.md)
 before using clusters operationally.
 
 ## Deployment and development
@@ -179,7 +179,7 @@ The repository includes locked Docker builds and a Terraform module for an
 S3-triggered Lambda deployment. The module deploys an ECR image by digest,
 limits Lambda reads to `incoming/`, writes reports below `reports/`, and
 routes exhausted asynchronous invocations to SQS. Follow
-[the deployment guide](https://github.com/Sarvesh-GanesanW/dataqualitychecker/blob/main/docs/DEPLOY.md);
+[the deployment guide](https://github.com/Sarvesh-GanesanW/qualipilot/blob/main/docs/DEPLOY.md);
 the first apply intentionally creates the ECR repository before Lambda.
 
 ```bash
@@ -193,10 +193,10 @@ parsing, and container smoke tests.
 
 Additional documentation:
 
-- [Architecture](https://github.com/Sarvesh-GanesanW/dataqualitychecker/blob/main/docs/ARCHITECTURE.md)
-- [Deployment](https://github.com/Sarvesh-GanesanW/dataqualitychecker/blob/main/docs/DEPLOY.md)
-- [Migrating from 2.x](https://github.com/Sarvesh-GanesanW/dataqualitychecker/blob/main/docs/MIGRATION.md)
-- [Changelog](https://github.com/Sarvesh-GanesanW/dataqualitychecker/blob/main/CHANGELOG.md)
+- [Architecture](https://github.com/Sarvesh-GanesanW/qualipilot/blob/main/docs/ARCHITECTURE.md)
+- [Deployment](https://github.com/Sarvesh-GanesanW/qualipilot/blob/main/docs/DEPLOY.md)
+- [Migrating from 2.x](https://github.com/Sarvesh-GanesanW/qualipilot/blob/main/docs/MIGRATION.md)
+- [Changelog](https://github.com/Sarvesh-GanesanW/qualipilot/blob/main/CHANGELOG.md)
 
 ## License
 
