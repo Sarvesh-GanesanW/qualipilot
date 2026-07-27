@@ -67,8 +67,7 @@ def _build_frame(
 
     dupe_names = [typo(names[int(i)], int(i)) for i in dupe_ids]
 
-    # tight compound blocking — postcode + dob_year keeps pair count
-    # well under the cap even at 500k rows
+    # Postcode blocking leaves date agreement available as matching signal.
     df = pl.DataFrame(
         {
             "id": list(range(n)),
@@ -100,6 +99,7 @@ def _run(
         blocking_rules=rules,
         match_threshold_probability=0.9,
         backend=backend,  # type: ignore[arg-type]
+        max_pairs_warning=PAIR_CAP,
         max_pairs_hard_cap=PAIR_CAP,
     )
     gc.collect()
@@ -141,7 +141,7 @@ def main() -> None:
         ExactMatch(column="postcode"),
         NumericDiff(column="dob", thresholds=(0.0, 1.0)),
     ]
-    rules = [["postcode", "dob"]]
+    rules = [["postcode"]]
 
     print(
         f"{'rows':>8} {'backend':>7} {'pairs':>10} "
