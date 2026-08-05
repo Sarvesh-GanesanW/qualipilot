@@ -36,7 +36,7 @@ from pydantic_settings import (
 from qualipilot.linking.config import LinkConfig
 
 EngineName = Literal["auto", "polars", "pandas", "duckdb", "dask", "spark"]
-LLMProvider = Literal["none", "bedrock", "ollama", "openai"]
+LLMProvider = Literal["none", "bedrock", "ollama", "openai", "gz"]
 ReportFormat = Literal["json", "html", "markdown"]
 
 
@@ -185,6 +185,7 @@ class LLMConfig(_StrictModel):
     """LLM provider settings; provider=none disables summarisation."""
 
     provider: LLMProvider = "none"
+    connection_name: str | None = None
     model: str = ""
     # bedrock
     region: str = "us-east-1"
@@ -204,13 +205,67 @@ class LLMConfig(_StrictModel):
         "recommended cleanup steps. Be specific; avoid filler."
     )
 
+    @model_validator(mode="before")
+    @classmethod
+    def _select_connection_provider(cls, value: Any) -> Any:
+        if not isinstance(value, Mapping) or "connection_name" not in value:
+            return value
+
+        data = dict(value)
+        if data.get("connection_name") is None:
+            return data
+        provider = data.get("provider")
+        if provider is None:
+            data["provider"] = "gz"
+        elif provider != "gz":
+            raise ValueError(
+                "connection_name cannot be combined with a direct provider"
+            )
+
+        mixed_fields = {
+            field
+            for field, is_mixed in {
+                "model": bool(str(data.get("model") or "").strip()),
+                "api_key": data.get("api_key") is not None,
+                "aws_profile": bool(
+                    str(data.get("aws_profile") or "").strip()
+                ),
+                "base_url": data.get("base_url", "http://localhost:11434/v1")
+                != "http://localhost:11434/v1",
+                "region": data.get("region", "us-east-1") != "us-east-1",
+            }.items()
+            if is_mixed
+        }
+        if mixed_fields:
+            fields = ", ".join(sorted(mixed_fields))
+            raise ValueError(
+                f"connection_name cannot be combined with: {fields}"
+            )
+        return data
+
+    @field_validator("connection_name")
+    @classmethod
+    def _validate_connection_name(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip()
+        if not value:
+            raise ValueError("connection_name must not be blank")
+        return value
+
     @model_validator(mode="after")
     def _validate_provider_settings(self) -> LLMConfig:
+        if self.provider == "gz" and self.connection_name is None:
+            raise ValueError("gz requires connection_name")
+        if self.provider != "gz" and self.connection_name is not None:
+            raise ValueError(
+                "connection_name cannot be combined with a direct provider"
+            )
         if self.provider == "bedrock" and self.temperature > 1.0:
             raise ValueError(
                 f"bedrock temperature must be <= 1.0; got {self.temperature}"
             )
-        if self.provider != "none" and not self.model.strip():
+        if self.provider not in {"none", "gz"} and not self.model.strip():
             raise ValueError(f"{self.provider} requires an explicit model")
         if self.provider == "bedrock" and not self.region.strip():
             raise ValueError("bedrock requires a region")

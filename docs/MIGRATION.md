@@ -40,14 +40,13 @@ check-specific fields in compatible releases.
 - `qualipilot.lakehouse` and the `iceberg`/`delta` extras were removed. Load
   those tables with their maintained client or Spark, then pass the resulting
   dataframe to Qualipilot.
-- DuckDB relations are no longer accepted as inputs because adapting them
-  forced eager materialization. Pass a supported file path, Arrow table,
-  Pandas dataframe, or Polars dataframe.
+- DuckDB relations are accepted as borrowed inputs. Qualipilot queries the
+  relation in place and leaves its runtime-owned connection open.
 - Array-oriented `.json` inputs were removed because backend parsers disagreed
   on their row model and required eager loading. Use `.jsonl` or `.ndjson`,
   with one object per line.
-- The optional Spark engine now targets PySpark 4.2.x, the version exercised
-  by CI. Keep an older Qualipilot release if a Spark 3.5 runtime is mandatory.
+- The optional Spark engine supports PySpark 3.5.6 through 4.2.x, including
+  the GroundZero Spark runtime.
 
 ## Configuration and CLI
 

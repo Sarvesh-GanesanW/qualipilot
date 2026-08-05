@@ -82,6 +82,8 @@ def _resolve_kind(data: Any, kind: str) -> str:
         return "dask"
     if module.startswith("pyspark"):
         return "spark"
+    if module == "_duckdb" and type(data).__name__ == "DuckDBPyRelation":
+        return "duckdb"
     if module.startswith("pandas"):
         # Keep the automatic single-node path on the default backend.
         return "polars"

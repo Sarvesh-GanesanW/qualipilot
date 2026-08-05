@@ -326,6 +326,8 @@ def _build_config(
         and llm_model is None
     ):
         llm_updates["model"] = ""
+    if provider_value is not None:
+        llm_updates["connection_name"] = None
     if llm_updates:
         current_llm = {
             field_name: getattr(cfg.llm, field_name)

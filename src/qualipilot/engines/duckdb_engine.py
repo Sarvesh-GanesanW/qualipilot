@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from contextlib import suppress
 from pathlib import Path
 from typing import Any
@@ -32,8 +33,17 @@ class DuckDBEngine(Engine):
 
     name = "duckdb"
 
-    def __init__(self, con: duckdb.DuckDBPyConnection, view: str) -> None:
+    def __init__(
+        self,
+        con: duckdb.DuckDBPyConnection | None,
+        view: str,
+        *,
+        relation: duckdb.DuckDBPyRelation | None = None,
+    ) -> None:
+        if (con is None) == (relation is None):
+            raise ValueError("provide exactly one DuckDB source")
         self._con = con
+        self._relation = relation
         self._view = view
         self._dtypes_cache: dict[str, str] | None = None
         self._closed = False
@@ -55,6 +65,9 @@ class DuckDBEngine(Engine):
         threads: int | None = None,
     ) -> DuckDBEngine:
         _validate_source_columns(data)
+        if isinstance(data, duckdb.DuckDBPyRelation):
+            return cls(None, "_t", relation=data)
+
         con = duckdb.connect(database=":memory:")
         view = "_t"
         try:
@@ -97,7 +110,7 @@ class DuckDBEngine(Engine):
 
     def close(self) -> None:
         """Release the private DuckDB connection and registered inputs."""
-        if not self._closed:
+        if self._con is not None and not self._closed:
             self._con.close()
             self._closed = True
 
@@ -122,10 +135,22 @@ class DuckDBEngine(Engine):
 
     def dtypes(self) -> dict[str, str]:
         if self._dtypes_cache is None:
-            rows = self._con.execute(
-                f"DESCRIBE SELECT * FROM {quote_identifier(self._view)}"
-            ).fetchall()
-            self._dtypes_cache = {name: str(dtype) for name, dtype, *_ in rows}
+            if self._relation is not None:
+                self._dtypes_cache = {
+                    name: str(dtype)
+                    for name, dtype in zip(
+                        self._relation.columns,
+                        self._relation.types,
+                        strict=True,
+                    )
+                }
+            else:
+                rows = self._execute(
+                    f"DESCRIBE SELECT * FROM {quote_identifier(self._view)}"
+                ).fetchall()
+                self._dtypes_cache = {
+                    name: str(dtype) for name, dtype, *_ in rows
+                }
         return dict(self._dtypes_cache)
 
     def numeric_columns(self) -> list[str]:
@@ -206,7 +231,7 @@ class DuckDBEngine(Engine):
         n: int = 10,
     ) -> list[tuple[str, int]]:
         identifier = quote_identifier(column)
-        rows = self._con.execute(
+        rows = self._execute(
             f"SELECT {identifier} AS v, COUNT(*) AS c "
             f"FROM {quote_identifier(self._view)} "
             f"WHERE NOT ({self._missing_sql(column)}) "
@@ -339,11 +364,7 @@ class DuckDBEngine(Engine):
         params: list[Any] | None = None,
     ) -> tuple[Any, ...]:
         """Run a query expected to return exactly one row, non-None."""
-        cursor = (
-            self._con.execute(sql, params)
-            if params is not None
-            else self._con.execute(sql)
-        )
+        cursor = self._execute(sql, params)
         result = cursor.fetchone()
         if not isinstance(result, tuple):
             raise RuntimeError(f"duckdb returned no row for: {sql!r}")
@@ -355,15 +376,33 @@ class DuckDBEngine(Engine):
     def _records(
         self, sql: str, params: list[Any] | None = None
     ) -> list[dict[str, Any]]:
-        cursor = (
+        cursor = self._execute(sql, params)
+        columns = (
+            list(cursor.columns)
+            if self._relation is not None
+            else [description[0] for description in cursor.description]
+        )
+        return [
+            dict(zip(columns, row, strict=True)) for row in cursor.fetchall()
+        ]
+
+    def _execute(
+        self,
+        sql: str,
+        params: list[Any] | None = None,
+    ) -> Any:
+        if self._relation is not None:
+            return self._relation.query(
+                self._view,
+                _bind_relation_parameters(sql, params or []),
+            )
+        if self._con is None:  # pragma: no cover - constructor invariant
+            raise RuntimeError("DuckDB engine has no source")
+        return (
             self._con.execute(sql, params)
             if params is not None
             else self._con.execute(sql)
         )
-        columns = [description[0] for description in cursor.description]
-        return [
-            dict(zip(columns, row, strict=True)) for row in cursor.fetchall()
-        ]
 
     def _missing_sql(self, column: str) -> str:
         identifier = quote_identifier(column)
@@ -423,9 +462,58 @@ def _validate_source_columns(data: Any) -> None:
         validate_column_names(data.columns)
     elif module.startswith("pyarrow"):
         validate_column_names(data.column_names)
+    elif isinstance(data, duckdb.DuckDBPyRelation):
+        validate_column_names(data.columns)
     elif isinstance(data, str | Path):
         path = Path(data)
         if path.suffix.lower() in {".parquet", ".pq"}:
             import pyarrow.parquet as pq
 
             validate_column_names(pq.read_schema(path).names)
+
+
+def _bind_relation_parameters(  # noqa: PLR0912
+    sql: str,
+    params: list[Any],
+) -> str:
+    literals: list[str] = []
+    for value in params:
+        if isinstance(value, bool | int):
+            literals.append(str(value).upper())
+        elif isinstance(value, float) and math.isfinite(value):
+            literals.append(repr(value))
+        else:
+            raise TypeError(
+                "DuckDB relation parameters must be finite numbers"
+            )
+
+    result: list[str] = []
+    parameter = iter(literals)
+    quote: str | None = None
+    index = 0
+    while index < len(sql):
+        character = sql[index]
+        result.append(character)
+        if quote is not None:
+            if character == quote:
+                if index + 1 < len(sql) and sql[index + 1] == quote:
+                    result.append(sql[index + 1])
+                    index += 1
+                else:
+                    quote = None
+        elif character in {'"', "'"}:
+            quote = character
+        elif character == "?":
+            try:
+                result[-1] = next(parameter)
+            except StopIteration as exc:
+                raise ValueError(
+                    "missing DuckDB relation query parameter"
+                ) from exc
+        index += 1
+
+    try:
+        next(parameter)
+    except StopIteration:
+        return "".join(result)
+    raise ValueError("too many DuckDB relation query parameters")

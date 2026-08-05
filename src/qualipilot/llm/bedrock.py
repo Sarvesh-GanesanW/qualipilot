@@ -7,6 +7,7 @@ across supported text models, so switching models is a config change.
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from typing import Any
 
 from qualipilot.llm.base import LLMProvider
@@ -20,7 +21,12 @@ class BedrockProvider(LLMProvider):
 
     name = "bedrock"
 
-    def __init__(self, cfg: LLMConfig) -> None:
+    def __init__(
+        self,
+        cfg: LLMConfig,
+        *,
+        aws_session_kwargs: Mapping[str, Any] | None = None,
+    ) -> None:
         try:
             import boto3
             from botocore.config import Config as BotoConfig
@@ -35,6 +41,8 @@ class BedrockProvider(LLMProvider):
         session_kwargs: dict[str, Any] = {"region_name": cfg.region}
         if cfg.aws_profile:
             session_kwargs["profile_name"] = cfg.aws_profile
+        if aws_session_kwargs:
+            session_kwargs.update(aws_session_kwargs)
         session = boto3.Session(**session_kwargs)
 
         # adaptive retries + keep-alive pooling trims cold-start cost

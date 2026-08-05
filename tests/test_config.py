@@ -148,6 +148,63 @@ def test_api_key_is_hidden_and_survives_file_loading(tmp_path: Path) -> None:
     assert "production-secret" not in config.model_dump_json()
 
 
+def test_connection_name_selects_gz_provider() -> None:
+    config = LLMConfig(connection_name=" TestDataQuality ")
+
+    assert config.provider == "gz"
+    assert config.connection_name == "TestDataQuality"
+    assert config.model == ""
+
+
+def test_gz_provider_can_be_explicit() -> None:
+    config = LLMConfig(
+        provider="gz",
+        connection_name="TestDataQuality",
+    )
+
+    assert config.provider == "gz"
+
+
+@pytest.mark.parametrize("connection_name", ["", "   "])
+def test_gz_connection_name_rejects_blanks(connection_name: str) -> None:
+    with pytest.raises(ValidationError, match="must not be blank"):
+        LLMConfig(connection_name=connection_name)
+
+
+def test_gz_provider_requires_connection_name() -> None:
+    with pytest.raises(ValidationError, match="requires connection_name"):
+        LLMConfig(provider="gz")
+
+
+@pytest.mark.parametrize("provider", ["none", "bedrock", "openai"])
+def test_connection_name_rejects_direct_provider(provider: str) -> None:
+    with pytest.raises(ValidationError, match="direct provider"):
+        LLMConfig(
+            provider=provider,  # type: ignore[arg-type]
+            connection_name="TestDataQuality",
+        )
+
+
+@pytest.mark.parametrize(
+    "direct_setting",
+    [
+        {"model": "direct-model"},
+        {"api_key": "direct-secret"},
+        {"base_url": "https://api.example.com/v1"},
+        {"region": "eu-west-1"},
+        {"aws_profile": "direct-profile"},
+    ],
+)
+def test_connection_name_rejects_direct_provider_settings(
+    direct_setting: dict[str, object],
+) -> None:
+    with pytest.raises(ValidationError, match="cannot be combined"):
+        LLMConfig(
+            connection_name="TestDataQuality",
+            **direct_setting,
+        )
+
+
 @pytest.mark.parametrize("provider", ["bedrock", "ollama", "openai"])
 def test_enabled_provider_requires_explicit_model(provider: str) -> None:
     with pytest.raises(ValidationError, match="requires an explicit model"):

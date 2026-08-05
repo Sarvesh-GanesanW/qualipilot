@@ -4,6 +4,20 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [3.1.0] - 2026-08-05
+
+### Added
+
+- GroundZero Spark and DuckDB runtime integration through managed LLM
+  connection names.
+- Borrowed DuckDB relations can be checked without closing their runtime
+  connection.
+
+### Changed
+
+- The Spark extra now supports the GZ runtime's PySpark 3.5.6 as well as
+  PySpark 4.2.
+
 ## [3.0.0] - 2026-07-27
 
 ### Breaking changes

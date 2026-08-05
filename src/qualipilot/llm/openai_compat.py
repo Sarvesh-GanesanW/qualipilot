@@ -7,6 +7,7 @@ OpenAI itself, Azure OpenAI, vLLM, LiteLLM proxy, LocalAI, etc.
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from typing import Any
 
 import httpx
@@ -27,9 +28,23 @@ logger = logging.getLogger(__name__)
 class OpenAICompatProvider(LLMProvider):
     name = "openai_compat"
 
-    def __init__(self, cfg: LLMConfig) -> None:
+    def __init__(
+        self,
+        cfg: LLMConfig,
+        *,
+        completion_url: str | None = None,
+        auth_header: str = "Authorization",
+        auth_scheme: str = "Bearer",
+        extra_headers: Mapping[str, str] | None = None,
+        include_model: bool = True,
+    ) -> None:
         self._cfg = cfg
         self._base = cfg.base_url.rstrip("/")
+        self._completion_url = completion_url
+        self._auth_header = auth_header
+        self._auth_scheme = auth_scheme
+        self._extra_headers = dict(extra_headers or {})
+        self._include_model = include_model
         self._model = cfg.model
         if not cfg.api_key:
             # some open-source servers still require a bearer token
@@ -40,7 +55,6 @@ class OpenAICompatProvider(LLMProvider):
 
     def generate(self, *, system: str, user: str) -> str:
         payload: dict[str, Any] = {
-            "model": self._model,
             "temperature": self._cfg.temperature,
             "max_tokens": self._cfg.max_tokens,
             "messages": [
@@ -48,6 +62,8 @@ class OpenAICompatProvider(LLMProvider):
                 {"role": "user", "content": user},
             ],
         }
+        if self._include_model:
+            payload["model"] = self._model
         retrying = Retrying(
             reraise=True,
             stop=stop_after_attempt(self._cfg.retries + 1),
@@ -57,11 +73,17 @@ class OpenAICompatProvider(LLMProvider):
         return str(retrying(self._post, payload))
 
     def _post(self, payload: dict[str, Any]) -> str:
-        url = f"{self._base}/chat/completions"
-        headers = {"Content-Type": "application/json"}
+        url = self._completion_url or f"{self._base}/chat/completions"
+        headers = {
+            "Content-Type": "application/json",
+            **self._extra_headers,
+        }
         if self._cfg.api_key:
-            headers["Authorization"] = (
-                f"Bearer {self._cfg.api_key.get_secret_value()}"
+            secret = self._cfg.api_key.get_secret_value()
+            headers[self._auth_header] = (
+                f"{self._auth_scheme} {secret}"
+                if self._auth_scheme
+                else secret
             )
 
         with httpx.Client(timeout=self._cfg.timeout_seconds) as client:

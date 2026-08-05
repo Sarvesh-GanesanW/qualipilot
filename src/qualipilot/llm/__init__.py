@@ -43,4 +43,8 @@ def build_provider(cfg: LLMConfig) -> LLMProvider:
         from qualipilot.llm.openai_compat import OpenAICompatProvider
 
         return OpenAICompatProvider(cfg)
+    if name == "gz":
+        from qualipilot.llm.gz import GZConnectionProvider
+
+        return GZConnectionProvider(cfg)
     raise ValueError(f"unknown llm provider: {name!r}")

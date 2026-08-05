@@ -285,6 +285,32 @@ def test_provider_override_preserves_configured_llm_tuning(
     assert merged.llm.system_prompt == "custom"
 
 
+def test_direct_provider_override_clears_configured_gz_connection(
+    tmp_path: Path,
+) -> None:
+    config = tmp_path / "qualipilot.yaml"
+    config.write_text(
+        "llm:\n  connection_name: TestDataQuality\n",
+        encoding="utf-8",
+    )
+
+    merged = _build_config(
+        config=config,
+        engine=None,
+        report_format=None,
+        llm_provider=LLMChoice.none,
+        llm_model=None,
+        bedrock_region=None,
+        aws_profile=None,
+        base_url=None,
+        allow_insecure_http=None,
+        range_spec=None,
+    )
+
+    assert merged.llm.provider == "none"
+    assert merged.llm.connection_name is None
+
+
 def test_invalid_config_is_a_cli_error(tmp_csv: Path, tmp_path: Path) -> None:
     config = tmp_path / "qualipilot.yaml"
     config.write_text("checks: [\n", encoding="utf-8")

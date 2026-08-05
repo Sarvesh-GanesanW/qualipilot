@@ -176,6 +176,38 @@ def test_build_engine_dispatches_duckdb(
     assert eng.name == "duckdb"
 
 
+def test_runtime_relation_is_checked_without_owning_its_connection() -> None:
+    connection = duckdb.connect()
+    relation = connection.sql(
+        "SELECT * FROM (VALUES (1, 5.0), (1, 50.0), (2, NULL)) "
+        "AS quality_input(id, amount)"
+    )
+
+    engine = build_engine(relation)
+    assert engine.name == "duckdb"
+    assert engine.row_count() == 3
+    assert engine.null_counts() == {"id": 0, "amount": 1}
+    assert engine.count_outside("amount", 0, 10) == 1
+    assert engine.sample_outside("amount", 0, 10, 1) == [
+        {"id": 1, "amount": 50.0}
+    ]
+
+    engine.close()
+    assert connection.sql("SELECT 1").fetchone() == (1,)
+    connection.close()
+
+
+def test_relation_binder_ignores_quoted_question_marks() -> None:
+    connection = duckdb.connect()
+    relation = connection.sql('SELECT 1 AS "amount?"')
+
+    with build_engine(relation) as engine:
+        assert engine.null_counts() == {"amount?": 0}
+        assert engine.top_values("amount?", 1) == [("1", 1)]
+
+    connection.close()
+
+
 def test_max_datetime(stale_timestamps_pandas: pd.DataFrame) -> None:
     eng = DuckDBEngine.from_any(stale_timestamps_pandas)
     assert eng.max_datetime("event_ts") is not None

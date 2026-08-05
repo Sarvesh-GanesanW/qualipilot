@@ -1456,7 +1456,7 @@ wheels = [
 
 [[package]]
 name = "qualipilot"
-version = "3.0.0"
+version = "3.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "numpy" },
@@ -1491,6 +1491,12 @@ dask = [
 ]
 duckdb = [
     { name = "duckdb" },
+]
+gz = [
+    { name = "boto3" },
+    { name = "botocore" },
+    { name = "httpx" },
+    { name = "tenacity" },
 ]
 linking = [
     { name = "rapidfuzz" },
@@ -1529,13 +1535,16 @@ dev = [
 requires-dist = [
     { name = "boto3", marker = "extra == 'all'", specifier = ">=1.35,<2" },
     { name = "boto3", marker = "extra == 'bedrock'", specifier = ">=1.35,<2" },
+    { name = "boto3", marker = "extra == 'gz'", specifier = ">=1.35,<2" },
     { name = "botocore", marker = "extra == 'all'", specifier = ">=1.35,<2" },
     { name = "botocore", marker = "extra == 'bedrock'", specifier = ">=1.35,<2" },
+    { name = "botocore", marker = "extra == 'gz'", specifier = ">=1.35,<2" },
     { name = "dask", extras = ["dataframe"], marker = "extra == 'all'", specifier = ">=2024.8,<2027" },
     { name = "dask", extras = ["dataframe"], marker = "extra == 'dask'", specifier = ">=2024.8,<2027" },
     { name = "duckdb", marker = "extra == 'all'", specifier = ">=1.5.1,<2" },
     { name = "duckdb", marker = "extra == 'duckdb'", specifier = ">=1.5.1,<2" },
     { name = "httpx", marker = "extra == 'all'", specifier = ">=0.27,<1" },
+    { name = "httpx", marker = "extra == 'gz'", specifier = ">=0.27,<1" },
     { name = "httpx", marker = "extra == 'ollama'", specifier = ">=0.27,<1" },
     { name = "httpx", marker = "extra == 'openai'", specifier = ">=0.27,<1" },
     { name = "numpy", specifier = ">=2.0,<2.5" },
@@ -1546,18 +1555,19 @@ requires-dist = [
     { name = "pyarrow", specifier = ">=17.0,<26" },
     { name = "pydantic", specifier = ">=2.9,<3" },
     { name = "pydantic-settings", specifier = ">=2.5,<3" },
-    { name = "pyspark", marker = "extra == 'all'", specifier = ">=4.2,<4.3" },
-    { name = "pyspark", marker = "extra == 'spark'", specifier = ">=4.2,<4.3" },
+    { name = "pyspark", marker = "extra == 'all'", specifier = ">=3.5.6,<4.3" },
+    { name = "pyspark", marker = "extra == 'spark'", specifier = ">=3.5.6,<4.3" },
     { name = "pyyaml", specifier = ">=6.0,<7" },
     { name = "rapidfuzz", marker = "extra == 'all'", specifier = ">=3.9,<4" },
     { name = "rapidfuzz", marker = "extra == 'linking'", specifier = ">=3.9,<4" },
     { name = "rich", specifier = ">=13.8,<16" },
     { name = "tenacity", marker = "extra == 'all'", specifier = ">=9.0,<10" },
+    { name = "tenacity", marker = "extra == 'gz'", specifier = ">=9.0,<10" },
     { name = "tenacity", marker = "extra == 'ollama'", specifier = ">=9.0,<10" },
     { name = "tenacity", marker = "extra == 'openai'", specifier = ">=9.0,<10" },
     { name = "typer", specifier = ">=0.15.4,<1" },
 ]
-provides-extras = ["bedrock", "dask", "ollama", "openai", "linking", "duckdb", "spark", "all"]
+provides-extras = ["bedrock", "dask", "ollama", "openai", "linking", "duckdb", "gz", "spark", "all"]
 
 [package.metadata.requires-dev]
 dev = [

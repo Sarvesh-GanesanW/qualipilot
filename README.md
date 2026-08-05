@@ -21,6 +21,7 @@ pip install "qualipilot[ollama]"        # Ollama
 pip install "qualipilot[openai]"        # OpenAI-compatible endpoint
 pip install "qualipilot[dask]"          # Dask engine
 pip install "qualipilot[duckdb]"        # DuckDB engine
+pip install "qualipilot[gz]"            # GroundZero managed LLM connections
 pip install "qualipilot[linking]"       # probabilistic linkage
 pip install "qualipilot[spark]"         # Spark engine
 ```
@@ -81,6 +82,34 @@ The context manager releases engine-owned resources such as DuckDB
 connections. Dataframes and externally supplied Spark sessions remain owned
 by the caller.
 
+### GroundZero runtimes
+
+The Spark and DuckDB runtime sessions expose the same thin adapter. Pass the
+name of a managed LLM connection; Qualipilot selects its provider from that
+connection's type and returns a `QualityReport`:
+
+```python
+from GZ.SparkUtils import sparkSession
+
+spark = sparkSession("testapp", "FATAL")
+df = spark.executeSnowflake("SourceSnowflake", "SELECT * FROM orders")
+report = spark.checkDataQuality(
+    df=df,
+    connectionName="TestDataQuality",
+)
+```
+
+The direct API accepts the same connection name:
+
+```python
+from qualipilot import DataQualityChecker, LLMConfig, QualipilotConfig
+
+report = DataQualityChecker(
+    df,
+    QualipilotConfig(llm=LLMConfig(connection_name="TestDataQuality")),
+).run()
+```
+
 ## Checks
 
 | Check | Default | Purpose |
@@ -114,12 +143,13 @@ scripts in `scripts/` to measure your own workload.
 
 ## Optional LLM reporting
 
-Available providers are `bedrock`, `ollama`, and `openai` (for compatible
-Chat Completions endpoints). The provider receives a compact summary of the
-quality report: column names and dtypes, aggregate check metrics, and check
-execution status. Input paths, source versions, exception messages, row
-samples, and top values are excluded. Keep the default `none` for fully
-local checks.
+Available direct providers are `bedrock`, `ollama`, and `openai` (for
+compatible Chat Completions endpoints). `LLMConfig(connection_name="...")`
+selects `gz` automatically and resolves the managed connection's actual
+provider at call time. The provider receives a compact summary of the quality
+report: column names and dtypes, aggregate check metrics, and check execution
+status. Input paths, source versions, exception messages, row samples, and top
+values are excluded. Keep the default `none` for fully local checks.
 
 Bedrock requires an explicit, currently available model ID:
 
