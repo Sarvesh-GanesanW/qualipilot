@@ -7,12 +7,14 @@ import sys
 from collections.abc import Iterator
 from pathlib import Path
 
+import pandas as pd
 import pytest
 
 pytest.importorskip("pyspark")
 
 from pyspark.sql import SparkSession
 
+from qualipilot import DataQualityChecker, QualipilotConfig
 from qualipilot.engines.spark_engine import SparkEngine
 
 
@@ -42,6 +44,31 @@ def test_spark_engine_contract(spark: SparkSession) -> None:
     assert engine.columns() == ["id", "amount"]
     assert engine.null_counts() == {"id": 0, "amount": 1}
     assert engine.duplicate_count() == 2
+
+
+def test_checker_uses_supplied_spark_session(spark: SparkSession) -> None:
+    supplied_session = spark.newSession()
+
+    checker = DataQualityChecker(
+        pd.DataFrame({"id": [1, 2]}),
+        QualipilotConfig(engine="spark"),
+        spark_session=supplied_session,
+    )
+
+    assert checker.engine._df.sparkSession is supplied_session
+    assert checker.run(include_llm=False).dataset.engine == "spark"
+
+
+def test_spark_dataframe_rejects_a_different_session(
+    spark: SparkSession,
+) -> None:
+    frame = spark.createDataFrame([(1,)], ["id"])
+
+    with pytest.raises(ValueError, match="different Spark session"):
+        SparkEngine.from_any(
+            frame,
+            spark_session=spark.newSession(),
+        )
 
 
 def test_spark_ranges_exclude_nan(spark: SparkSession) -> None:

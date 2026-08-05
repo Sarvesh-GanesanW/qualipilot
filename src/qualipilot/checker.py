@@ -36,6 +36,9 @@ from qualipilot.models.results import (
 )
 
 if TYPE_CHECKING:
+    from duckdb import DuckDBPyConnection
+    from pyspark.sql import SparkSession
+
     from qualipilot.engines.base import Engine
 
 logger = logging.getLogger(__name__)
@@ -43,6 +46,9 @@ logger = logging.getLogger(__name__)
 
 class DataQualityChecker:
     """Run configurable data quality checks against a dataframe/file.
+
+    Caller-supplied ``spark_session`` and ``duckdb_connection`` objects bind
+    execution to an existing runtime and remain owned by the caller.
 
     Example:
         >>> import pandas as pd
@@ -60,6 +66,8 @@ class DataQualityChecker:
         *,
         source: str | None = None,
         source_version: str | None = None,
+        spark_session: SparkSession | None = None,
+        duckdb_connection: DuckDBPyConnection | None = None,
     ) -> None:
         self.config = config or QualipilotConfig()
         if (
@@ -79,7 +87,12 @@ class DataQualityChecker:
         )
         if input_columns is not None:
             _validate_column_names(list(input_columns))
-        self.engine: Engine = build_engine(data, kind=self.config.engine)
+        self.engine: Engine = build_engine(
+            data,
+            kind=self.config.engine,
+            spark_session=spark_session,
+            duckdb_connection=duckdb_connection,
+        )
         if self.config.checks.linkage is not None and self.engine.name not in {
             "polars",
             "pandas",

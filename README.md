@@ -93,11 +93,27 @@ from GZ.SparkUtils import sparkSession
 
 spark = sparkSession("testapp", "FATAL")
 df = spark.executeSnowflake("SourceSnowflake", "SELECT * FROM orders")
-report = spark.checkDataQuality(
+report = spark.runDataQualityChecks(
     df=df,
     connectionName="TestDataQuality",
 )
+
+# These variants load data through the same underlying Spark session.
+table_report = spark.runTableDataQualityChecks(
+    tableName="analytics.orders",
+    connectionName="TestDataQuality",
+)
+query_report = spark.runQueryDataQualityChecks(
+    query="SELECT * FROM analytics.orders WHERE status = 'open'",
+    connectionName="TestDataQuality",
+)
+
+spark.saveDataQualityReport(report, "reports/orders.json")
 ```
+
+The runtime adapter passes its underlying Spark session to Qualipilot. The
+DuckDB adapter exposes the same methods and passes its existing DuckDB
+connection, so neither runtime creates or closes a caller-owned session.
 
 The direct API accepts the same connection name:
 

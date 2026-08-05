@@ -58,22 +58,53 @@ class DuckDBEngine(Engine):
         )
 
     @classmethod
-    def from_any(
+    def from_any(  # noqa: PLR0912
         cls,
         data: Any,
         *,
         threads: int | None = None,
+        duckdb_connection: duckdb.DuckDBPyConnection | None = None,
     ) -> DuckDBEngine:
         _validate_source_columns(data)
-        if isinstance(data, duckdb.DuckDBPyRelation):
+        if duckdb_connection is not None and not isinstance(
+            duckdb_connection, duckdb.DuckDBPyConnection
+        ):
+            raise TypeError("duckdb_connection must be a DuckDB connection")
+        if threads is not None and threads < 1:
+            raise ValueError("threads must be >= 1")
+        if type(data).__module__.startswith("polars"):
+            unsupported = [
+                column
+                for column, dtype in data.schema.items()
+                if str(dtype) in {"Int128", "UInt128"}
+            ]
+            if unsupported:
+                raise ValueError(
+                    "DuckDB engine does not support 128-bit Polars "
+                    f"columns: {unsupported}"
+                )
+
+        if duckdb_connection is not None and threads is not None:
+            duckdb_connection.execute("SET threads = ?", [threads])
+        if (
+            isinstance(data, duckdb.DuckDBPyRelation)
+            and duckdb_connection is None
+        ):
             return cls(None, "_t", relation=data)
+        if duckdb_connection is not None:
+            return cls(
+                None,
+                "_t",
+                relation=_relation_from_connection(
+                    duckdb_connection,
+                    data,
+                ),
+            )
 
         con = duckdb.connect(database=":memory:")
         view = "_t"
         try:
             if threads is not None:
-                if threads < 1:
-                    raise ValueError("threads must be >= 1")
                 con.execute("SET threads = ?", [threads])
 
             if isinstance(data, str | Path):
@@ -86,16 +117,6 @@ class DuckDBEngine(Engine):
             elif type(data).__module__.startswith("pandas"):
                 con.register(view, data)
             elif type(data).__module__.startswith("polars"):
-                unsupported = [
-                    column
-                    for column, dtype in data.schema.items()
-                    if str(dtype) in {"Int128", "UInt128"}
-                ]
-                if unsupported:
-                    raise ValueError(
-                        "DuckDB engine does not support 128-bit Polars "
-                        f"columns: {unsupported}"
-                    )
                 con.register(view, data.to_arrow())
             elif type(data).__module__.startswith("pyarrow"):
                 con.register(view, data)
@@ -452,6 +473,24 @@ def _file_source(path: Path) -> str:
             f"columns = {{{columns}}})"
         )
     raise ValueError(f"unsupported file type: {suffix}")
+
+
+def _relation_from_connection(
+    connection: duckdb.DuckDBPyConnection,
+    data: Any,
+) -> duckdb.DuckDBPyRelation:
+    """Bind a supported input to a caller-owned DuckDB connection."""
+    if isinstance(data, duckdb.DuckDBPyRelation):
+        return connection.sql("SELECT * FROM data")
+    if isinstance(data, str | Path):
+        return connection.sql(f"SELECT * FROM {_file_source(Path(data))}")
+    if type(data).__module__.startswith("pandas"):
+        return connection.from_df(data)
+    if type(data).__module__.startswith("polars"):
+        return connection.from_arrow(data.to_arrow())
+    if type(data).__module__.startswith("pyarrow"):
+        return connection.from_arrow(data)
+    raise TypeError(f"cannot build DuckDBEngine from {type(data).__name__}")
 
 
 def _validate_source_columns(data: Any) -> None:

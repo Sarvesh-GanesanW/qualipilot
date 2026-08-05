@@ -98,6 +98,26 @@ def test_build_engine_dispatch(dirty_pandas: pd.DataFrame) -> None:
     assert eng.name == "pandas"
 
 
+def test_build_engine_rejects_execution_context_backend_mismatches(
+    dirty_pandas: pd.DataFrame,
+) -> None:
+    with pytest.raises(ValueError, match=r"spark_session.*spark engine"):
+        build_engine(
+            dirty_pandas,
+            kind="pandas",
+            spark_session=object(),  # type: ignore[arg-type]
+        )
+    with pytest.raises(
+        ValueError,
+        match=r"duckdb_connection.*duckdb engine",
+    ):
+        build_engine(
+            dirty_pandas,
+            kind="pandas",
+            duckdb_connection=object(),  # type: ignore[arg-type]
+        )
+
+
 @pytest.mark.parametrize(
     "kind", ["auto", "polars", "pandas", "duckdb", "dask"]
 )

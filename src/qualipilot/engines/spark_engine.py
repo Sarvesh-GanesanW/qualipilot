@@ -54,6 +54,7 @@ class SparkEngine(Engine):
         cls,
         data: Any,
         *,
+        spark_session: SparkSession | None = None,
         spark: SparkSession | None = None,
     ) -> SparkEngine:
         """Build a Spark engine from a DataFrame or file path.
@@ -62,8 +63,9 @@ class SparkEngine(Engine):
             data: one of
                 * a ``pyspark.sql.DataFrame`` (used directly)
                 * a plain path to Parquet / CSV / JSON
-            spark: an existing SparkSession. If omitted we call
+            spark_session: An existing SparkSession. If omitted we call
                 ``SparkSession.getOrCreate``.
+            spark: Deprecated alias for ``spark_session``.
         """
         if isinstance(data, str | Path):
             require_safe_remote_url(data)
@@ -71,9 +73,23 @@ class SparkEngine(Engine):
         from pyspark.sql import DataFrame as SparkDataFrame
         from pyspark.sql import SparkSession
 
-        session = spark or SparkSession.builder.getOrCreate()
+        if (
+            spark_session is not None
+            and spark is not None
+            and spark_session is not spark
+        ):
+            raise ValueError("provide only one Spark session")
+        requested_session = spark_session or spark
+        session = requested_session or SparkSession.builder.getOrCreate()
 
         if isinstance(data, SparkDataFrame):
+            if (
+                requested_session is not None
+                and data.sparkSession is not requested_session
+            ):
+                raise ValueError(
+                    "Spark DataFrame belongs to a different Spark session"
+                )
             return cls(data)
         if isinstance(data, str | Path):
             raw = str(data)

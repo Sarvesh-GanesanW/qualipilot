@@ -16,6 +16,7 @@ import pytest
 
 duckdb = pytest.importorskip("duckdb")
 
+from qualipilot import DataQualityChecker, QualipilotConfig  # noqa: E402
 from qualipilot.engines import build_engine  # noqa: E402
 from qualipilot.engines.duckdb_engine import DuckDBEngine  # noqa: E402
 from qualipilot.engines.pandas_engine import PandasEngine  # noqa: E402
@@ -183,7 +184,7 @@ def test_runtime_relation_is_checked_without_owning_its_connection() -> None:
         "AS quality_input(id, amount)"
     )
 
-    engine = build_engine(relation)
+    engine = build_engine(relation, duckdb_connection=connection)
     assert engine.name == "duckdb"
     assert engine.row_count() == 3
     assert engine.null_counts() == {"id": 0, "amount": 1}
@@ -195,6 +196,74 @@ def test_runtime_relation_is_checked_without_owning_its_connection() -> None:
     engine.close()
     assert connection.sql("SELECT 1").fetchone() == (1,)
     connection.close()
+
+
+def test_relation_rejects_a_different_borrowed_connection() -> None:
+    source_connection = duckdb.connect()
+    other_connection = duckdb.connect()
+    try:
+        relation = source_connection.sql("SELECT 1 AS id")
+
+        with pytest.raises(
+            duckdb.InvalidInputException,
+            match="another Connection",
+        ):
+            build_engine(
+                relation,
+                duckdb_connection=other_connection,
+            )
+    finally:
+        source_connection.close()
+        other_connection.close()
+
+
+def test_checker_uses_borrowed_duckdb_connection(
+    dirty_pandas: pd.DataFrame,
+) -> None:
+    connection = duckdb.connect()
+    try:
+        with DataQualityChecker(
+            dirty_pandas,
+            QualipilotConfig(engine="duckdb"),
+            duckdb_connection=connection,
+        ) as checker:
+            assert checker.run(include_llm=False).dataset.engine == "duckdb"
+
+        assert connection.sql("SELECT 1").fetchone() == (1,)
+    finally:
+        connection.close()
+
+
+def test_borrowed_connection_supports_in_memory_inputs() -> None:
+    connection = duckdb.connect()
+    inputs = [
+        pd.DataFrame({"id": [1, 2]}),
+        pl.DataFrame({"id": [1, 2]}),
+        pa.table({"id": [1, 2]}),
+    ]
+    try:
+        for data in inputs:
+            with DuckDBEngine.from_any(
+                data,
+                duckdb_connection=connection,
+            ) as engine:
+                assert engine.row_count() == 2
+        assert connection.sql("SELECT 1").fetchone() == (1,)
+    finally:
+        connection.close()
+
+
+def test_borrowed_connection_supports_file_inputs(tmp_csv: Path) -> None:
+    connection = duckdb.connect()
+    try:
+        with DuckDBEngine.from_any(
+            tmp_csv,
+            duckdb_connection=connection,
+        ) as engine:
+            assert engine.row_count() > 0
+        assert connection.sql("SELECT 1").fetchone() == (1,)
+    finally:
+        connection.close()
 
 
 def test_relation_binder_ignores_quoted_question_marks() -> None:

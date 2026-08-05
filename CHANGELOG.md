@@ -4,6 +4,20 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [3.1.1] - 2026-08-05
+
+### Added
+
+- Explicit caller-owned Spark session and DuckDB connection support for
+  runtime adapters.
+
+### Fixed
+
+- GroundZero data quality checks now stay bound to their originating runtime
+  session instead of resolving an implicit engine context.
+- GroundZero examples now use the session-oriented data quality API rather
+  than the placeholder `checkDataQuality` name.
+
 ## [3.1.0] - 2026-08-05
 
 ### Added

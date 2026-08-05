@@ -6,12 +6,16 @@ specific dataframe library.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from qualipilot.engines._file_formats import require_safe_remote_url
 from qualipilot.engines.base import Engine
 from qualipilot.engines.pandas_engine import PandasEngine
 from qualipilot.engines.polars_engine import PolarsEngine
+
+if TYPE_CHECKING:
+    from duckdb import DuckDBPyConnection
+    from pyspark.sql import SparkSession
 
 __all__ = [
     "Engine",
@@ -27,6 +31,8 @@ def build_engine(
     *,
     npartitions: int = 4,
     duckdb_threads: int | None = None,
+    spark_session: SparkSession | None = None,
+    duckdb_connection: DuckDBPyConnection | None = None,
 ) -> Engine:
     """Pick the right engine for the given input + requested backend.
 
@@ -36,6 +42,8 @@ def build_engine(
         npartitions: Partition count passed to Dask when that engine is
             picked.
         duckdb_threads: Optional per-connection DuckDB thread limit.
+        spark_session: Existing session used by the Spark engine.
+        duckdb_connection: Existing connection used by the DuckDB engine.
 
     Returns:
         A concrete ``Engine`` bound to the supplied dataframe.
@@ -48,6 +56,10 @@ def build_engine(
     if isinstance(data, str):
         require_safe_remote_url(data)
     resolved = _resolve_kind(data, kind)
+    if spark_session is not None and resolved != "spark":
+        raise ValueError("spark_session requires the spark engine")
+    if duckdb_connection is not None and resolved != "duckdb":
+        raise ValueError("duckdb_connection requires the duckdb engine")
 
     if resolved == "polars":
         return PolarsEngine.from_any(data)
@@ -56,7 +68,11 @@ def build_engine(
     if resolved == "duckdb":
         from qualipilot.engines.duckdb_engine import DuckDBEngine
 
-        return DuckDBEngine.from_any(data, threads=duckdb_threads)
+        return DuckDBEngine.from_any(
+            data,
+            threads=duckdb_threads,
+            duckdb_connection=duckdb_connection,
+        )
     if resolved == "dask":
         from qualipilot.engines.dask_engine import DaskEngine
 
@@ -64,7 +80,7 @@ def build_engine(
     if resolved == "spark":
         from qualipilot.engines.spark_engine import SparkEngine
 
-        return SparkEngine.from_any(data)
+        return SparkEngine.from_any(data, spark_session=spark_session)
 
     raise ValueError(f"unknown engine kind: {kind!r}")
 
