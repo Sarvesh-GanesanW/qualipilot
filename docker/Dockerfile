@@ -1,4 +1,4 @@
-FROM python:3.12.13-slim-bookworm@sha256:8a7e7cc04fd3e2bd787f7f24e22d5d119aa590d429b50c95dfe12b3abe52f48b AS builder
+FROM python:3.14.0-slim-bookworm@sha256:d13fa0424035d290decef3d575cea23d1b7d5952cdf429df8f5542c71e961576 AS builder
 
 ARG EXTRAS=""
 ARG UV_VERSION=0.11.21
@@ -23,7 +23,7 @@ RUN if [ -n "${EXTRAS}" ]; then \
         uv sync --locked --no-dev --no-editable; \
     fi
 
-FROM python:3.12.13-slim-bookworm@sha256:8a7e7cc04fd3e2bd787f7f24e22d5d119aa590d429b50c95dfe12b3abe52f48b AS runtime
+FROM python:3.14.0-slim-bookworm@sha256:d13fa0424035d290decef3d575cea23d1b7d5952cdf429df8f5542c71e961576 AS runtime
 
 ARG VCS_REF=unknown
 
