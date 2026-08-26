@@ -4,11 +4,41 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [3.2.0] - 2026-08-26
+
 ### Added
 
 - Optional spaCy named-entity extraction API and CLI with batched processing,
   character offsets, model/source provenance, label filtering, and atomic JSON
   audits.
+- Per-check severity overrides, portable dtype-family contracts, and quantile
+  provenance across dataframe engines.
+- Ground-truth linkage evaluation with confusion-matrix counts, precision,
+  recall, and F1, including labeled pairs omitted during blocking.
+- Forward-compatible `QualityReport.from_json()` loading for newer optional
+  report fields.
+
+### Changed
+
+- Linkage fitting now reports convergence and safety diagnostics, smooths
+  learned probabilities, and rejects degenerate or inverted fits before
+  clustering or consolidation.
+- Freshness checks compare timezone-aware instants consistently across
+  engines and fail closed when configured temporal data is missing or invalid.
+- Managed GroundZero LLM connections now require explicit models; Hugging Face
+  connections also require an explicit inference endpoint or base URL.
+- LLM report payloads are bounded while retaining actionable findings, and
+  Markdown reports retain JSON payload details for extension checks.
+
+### Fixed
+
+- Portable numeric, date, and timestamp handling for object/string columns,
+  including Spark and Dask edge cases.
+- NER audits now reject non-finite identifiers before serialization and record
+  the normalized label filter used during extraction.
+- Report deserialization remains compatible with the minimum supported
+  Pydantic release.
+- Refreshed locked development dependencies and the Lambda base image.
 
 ## [3.1.1] - 2026-08-05
 
