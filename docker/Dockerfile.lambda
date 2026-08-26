@@ -1,4 +1,4 @@
-FROM amazon/aws-lambda-python:3.12.2026.07.26.12-x86_64@sha256:7f3e45f36ea435ef06f6b19f531ad69d357c41c9759ade6ee7d5e6ae47ff051f AS builder
+FROM amazon/aws-lambda-python:3.12.2026.08.23.12-x86_64@sha256:bd34fee48872eb16c6806c583fe7458a1519d911ed8341edc511beeb312806f2 AS builder
 
 ARG UV_VERSION=0.11.21
 
@@ -16,7 +16,7 @@ COPY src ./src
 
 RUN uv sync --locked --no-dev --no-editable --extra bedrock
 
-FROM amazon/aws-lambda-python:3.12.2026.07.26.12-x86_64@sha256:7f3e45f36ea435ef06f6b19f531ad69d357c41c9759ade6ee7d5e6ae47ff051f
+FROM amazon/aws-lambda-python:3.12.2026.08.23.12-x86_64@sha256:bd34fee48872eb16c6806c583fe7458a1519d911ed8341edc511beeb312806f2
 
 ARG VCS_REF=unknown
 ARG VERSION=3.1.1
