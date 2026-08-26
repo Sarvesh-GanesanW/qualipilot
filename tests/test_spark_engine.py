@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import sys
 from collections.abc import Iterator
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 import pandas as pd
@@ -14,7 +15,8 @@ pytest.importorskip("pyspark")
 
 from pyspark.sql import SparkSession
 
-from qualipilot import DataQualityChecker, QualipilotConfig
+from qualipilot import CheckConfig, DataQualityChecker, QualipilotConfig
+from qualipilot.checks import CheckContext, OutliersCheck
 from qualipilot.engines.spark_engine import SparkEngine
 
 
@@ -119,6 +121,14 @@ def test_spark_batches_quantiles_across_columns(
         "second": {0.5: 20.0},
     }
 
+    result = OutliersCheck().run(
+        CheckContext(engine=engine, config=CheckConfig())
+    )
+    assert result.payload["quantile_provenance"] == {
+        "method": "approximate",
+        "relative_error": 0.001,
+    }
+
 
 def test_spark_batched_counts_match_scalar_metrics(
     spark: SparkSession,
@@ -182,6 +192,70 @@ def test_spark_jsonl_duplicate_keys_are_rejected(
 
     with pytest.raises(ValueError, match="duplicate object keys"):
         SparkEngine.from_any(path, spark=spark)
+
+
+def test_spark_string_datetime_max_uses_offset_instants(
+    spark: SparkSession,
+) -> None:
+    engine = SparkEngine(
+        spark.createDataFrame(
+            [
+                ("2026-08-26T00:00:00+14:00",),
+                ("2026-08-25T23:30:00-12:00",),
+            ],
+            ["event_ts"],
+        )
+    )
+
+    assert engine.max_datetime_instant("event_ts") == datetime(
+        2026,
+        8,
+        26,
+        11,
+        30,
+        tzinfo=UTC,
+    )
+
+
+def test_spark_accepts_pandas_object_numeric_and_date_columns(
+    spark: SparkSession,
+) -> None:
+    frame = pd.DataFrame(
+        {
+            "amount": pd.Series([1, 2], dtype=object),
+            "event_date": pd.Series(
+                [date(2026, 8, 25), date(2026, 8, 26)],
+                dtype=object,
+            ),
+        }
+    )
+
+    engine = SparkEngine.from_any(frame, spark_session=spark)
+
+    assert engine.dtype_family("amount") == "integer"
+    assert engine.numeric_columns() == ["amount"]
+    assert engine.count_outside("amount", 0, 10) == 0
+    assert engine.dtype_family("event_date") == "date"
+    assert engine.datetime_columns() == ["event_date"]
+
+
+def test_spark_freshness_fails_closed_without_datetime_columns(
+    spark: SparkSession,
+) -> None:
+    frame = spark.createDataFrame([(1,), (2,)], ["id"])
+    config = QualipilotConfig(
+        engine="spark",
+        checks=CheckConfig(freshness=True),
+    )
+
+    report = DataQualityChecker(frame, config).run(include_llm=False)
+    freshness = next(
+        result for result in report.results if result.name == "freshness"
+    )
+
+    assert freshness.status == "completed"
+    assert freshness.severity == "error"
+    assert freshness.payload["per_column"] == []
 
 
 @pytest.mark.parametrize(

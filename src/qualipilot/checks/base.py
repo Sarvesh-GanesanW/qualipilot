@@ -6,10 +6,10 @@ import logging
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 from qualipilot.engines.base import Engine
-from qualipilot.models.config import CheckConfig
+from qualipilot.models.config import BuiltInCheckName, CheckConfig
 from qualipilot.models.results import CheckResult, Severity
 
 logger = logging.getLogger(__name__)
@@ -41,6 +41,11 @@ class Check(ABC):
         start = time.perf_counter()
         try:
             severity, payload = self._execute(ctx)
+            if severity != "ok":
+                severity = ctx.config.severity_overrides.get(
+                    cast(BuiltInCheckName, self.name),
+                    severity,
+                )
             return CheckResult(
                 name=self.name,
                 severity=severity,

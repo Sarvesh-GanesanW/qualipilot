@@ -46,8 +46,10 @@ jobs:
           uv sync --locked
           --extra bedrock
           --extra dask
+          --extra gz
           --extra linking
           --extra duckdb
+          --extra ner
           --extra ollama
           --extra openai
       - run: uv run ruff check .

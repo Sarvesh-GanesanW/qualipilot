@@ -194,6 +194,18 @@ bedrock_inference_profiles = {
 }
 ```
 
+Inference profiles also change where LLM metadata can be processed. A
+geographic profile can move prompts and responses outside the source Region
+while keeping them inside its named geography; data retained for abuse
+detection can be stored in a destination Region. A global profile can route
+requests across supported commercial AWS Regions worldwide. Review the AWS
+[geographic](https://docs.aws.amazon.com/bedrock/latest/userguide/geographic-cross-region-inference.html)
+and
+[global](https://docs.aws.amazon.com/bedrock/latest/userguide/global-cross-region-inference.html)
+residency guidance and every destination Region before enabling a profile.
+Use a directly invoked in-Region model when policy requires processing to
+remain in the source Region.
+
 When `qualipilot_config` enables Bedrock, its `llm.model` must be the
 same exact model or inference-profile ARN supplied in one of these allowlists.
 

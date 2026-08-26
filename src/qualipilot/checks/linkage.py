@@ -47,7 +47,12 @@ class LinkageCheck(Check):
             sz for sz in counts.values() if sz > 1
         )
 
-        severity: Severity = "warn" if multi > 0 else "ok"
+        if summary["fit_status"] == "rejected":
+            severity: Severity = "error"
+        elif summary["fit_status"] == "warning" or multi > 0:
+            severity = "warn"
+        else:
+            severity = "ok"
         return severity, {
             **summary,
             "duplicate_clusters": multi,

@@ -56,8 +56,10 @@ jobs:
           uv sync --locked
           --extra bedrock
           --extra dask
+          --extra gz
           --extra linking
           --extra duckdb
+          --extra ner
           --extra ollama
           --extra openai
       - run: uv run pytest -q
@@ -85,7 +87,8 @@ jobs:
       - run: uv sync --locked
       - run: >-
           uv export --locked --no-dev --no-emit-project
-          --extra bedrock --extra dask --extra linking --extra duckdb
+          --extra bedrock --extra dask --extra gz --extra linking --extra duckdb
+          --extra ner
           --extra ollama --extra openai --extra spark
           --output-file "$RUNNER_TEMP/requirements-audit.txt"
       - run: >-
@@ -126,7 +129,7 @@ jobs:
       - run: uv venv
       - run: >-
           uv pip install --resolution lowest-direct
-          ".[bedrock,dask,linking,duckdb,ollama,openai]"
+          ".[bedrock,dask,gz,linking,duckdb,ner,ollama,openai]"
           "pytest>=8.3,<10"
           "pytest-cov>=5.0,<8"
           "hypothesis>=6.112,<7"

@@ -25,7 +25,7 @@ from rich.console import Console
 from rich.table import Table
 
 from qualipilot import __version__
-from qualipilot.checker import DataQualityChecker
+from qualipilot.checker import DataQualityChecker, write_text_atomic
 from qualipilot.logging_setup import configure_logging
 from qualipilot.models.config import (
     ColumnRange,
@@ -77,6 +77,7 @@ app = typer.Typer(
 )
 
 console = Console()
+error_console = Console(stderr=True)
 
 
 def _version_callback(value: bool) -> None:
@@ -408,6 +409,181 @@ def _compute_exit_code(report: QualityReport, fail_on: SeverityChoice) -> int:
     threshold = order[fail_on.value]
     worst = max((order[r.severity] for r in report.results), default=0)
     return 1 if worst >= threshold else 0
+
+
+@app.command("ner")
+def ner_command(
+    input_path: Annotated[
+        Path,
+        typer.Argument(
+            exists=True,
+            readable=True,
+            help="CSV, JSONL, NDJSON, or Parquet file containing text.",
+        ),
+    ],
+    text_column: Annotated[
+        str,
+        typer.Option("--text", help="String column to process."),
+    ],
+    model: Annotated[
+        str,
+        typer.Option(
+            "--model",
+            help="Installed spaCy pipeline package name or local path.",
+        ),
+    ],
+    id_column: Annotated[
+        str | None,
+        typer.Option(
+            "--id",
+            help="Optional unique, non-null record identifier column.",
+        ),
+    ] = None,
+    label: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--label",
+            help="Only retain this entity label (repeatable).",
+        ),
+    ] = None,
+    output: Annotated[
+        Path | None,
+        typer.Option("--output", "-o", help="Write audit JSON here."),
+    ] = None,
+    batch_size: Annotated[
+        int,
+        typer.Option("--batch-size", min=1),
+    ] = 1_000,
+    processes: Annotated[
+        int,
+        typer.Option("--processes", min=1),
+    ] = 1,
+) -> None:
+    """Extract named entities with an explicitly installed spaCy model."""
+    from qualipilot.ner import SpacyEntityRecognizer
+
+    source_hash = _sha256_file(input_path)
+    frame = _read_any(input_path)
+    _validate_ner_request(
+        input_path,
+        output,
+        frame,
+        text_column=text_column,
+        id_column=id_column,
+    )
+    if label is not None and any(not value.strip() for value in label):
+        raise typer.BadParameter(
+            "labels must contain non-empty values",
+            param_hint="--label",
+        )
+
+    try:
+        recognizer = SpacyEntityRecognizer(
+            model,
+            labels=label,
+            batch_size=batch_size,
+            n_process=processes,
+        )
+    except (RuntimeError, ValueError) as exc:
+        raise typer.BadParameter(str(exc), param_hint="--model") from exc
+
+    id_values = (
+        frame.get_column(id_column).to_list()
+        if id_column is not None
+        else [None] * frame.height
+    )
+    documents = [
+        (row_index, record_id, text)
+        for row_index, (record_id, text) in enumerate(
+            zip(
+                id_values,
+                frame.get_column(text_column).cast(pl.String).to_list(),
+                strict=True,
+            )
+        )
+        if text is not None
+    ]
+    extracted = recognizer.extract_many(document[2] for document in documents)
+    entities: list[dict[str, Any]] = []
+    label_counts: dict[str, int] = {}
+    for (row_index, record_id, _), document_entities in zip(
+        documents, extracted, strict=True
+    ):
+        for entity in document_entities:
+            item: dict[str, Any] = {
+                "row_index": row_index,
+                **entity.to_dict(),
+            }
+            if id_column is not None:
+                item["record_id"] = record_id
+            entities.append(item)
+            label_counts[entity.label] = label_counts.get(entity.label, 0) + 1
+
+    if _sha256_file(input_path) != source_hash:
+        raise typer.BadParameter("input changed during NER; rerun the command")
+    payload = {
+        "schema_version": "1.0",
+        "generated_at": datetime.now(UTC).isoformat(),
+        "package_version": __version__,
+        "source": str(input_path.resolve()),
+        "source_sha256": source_hash,
+        "text_column": text_column,
+        "id_column": id_column,
+        "label_filter": recognizer.label_filter,
+        "model": recognizer.metadata,
+        "summary": {
+            "rows": frame.height,
+            "processed_rows": len(documents),
+            "null_rows": frame.height - len(documents),
+            "entities": len(entities),
+            "labels": dict(sorted(label_counts.items())),
+        },
+        "entities": entities,
+    }
+    rendered = json.dumps(
+        payload,
+        default=_json_default,
+        allow_nan=False,
+        indent=2,
+    )
+    if output is None:
+        console.print_json(json=rendered)
+    else:
+        write_text_atomic(output, f"{rendered}\n")
+        console.print(f"NER audit written to {output}", markup=False)
+
+
+def _validate_ner_request(
+    input_path: Path,
+    output: Path | None,
+    frame: pl.DataFrame,
+    *,
+    text_column: str,
+    id_column: str | None,
+) -> None:
+    if output is not None and output.suffix.lower() != ".json":
+        raise typer.BadParameter("--output must end in .json")
+    if output is not None and input_path.resolve() == output.resolve():
+        raise typer.BadParameter("output must not overwrite the input")
+    if text_column not in frame.columns:
+        raise typer.BadParameter(f"text column {text_column!r} not found")
+    text_type = frame.schema[text_column].base_type()
+    if text_type not in {pl.String, pl.Categorical, pl.Enum, pl.Null}:
+        raise typer.BadParameter(
+            f"text column {text_column!r} must be string, got {text_type}"
+        )
+    if id_column is not None:
+        if id_column not in frame.columns:
+            raise typer.BadParameter(f"id column {id_column!r} not found")
+        ids = frame.get_column(id_column)
+        if ids.null_count():
+            raise typer.BadParameter(f"id column {id_column!r} has nulls")
+        if ids.n_unique() != frame.height:
+            raise typer.BadParameter(f"id column {id_column!r} is not unique")
+        if ids.dtype.is_float() and not ids.is_finite().all():
+            raise typer.BadParameter(
+                f"id column {id_column!r} has non-finite values"
+            )
 
 
 @app.command("link")
@@ -1058,7 +1234,7 @@ def _run() -> None:  # pragma: no cover
         app()
     except Exception as exc:
         message = str(exc) or type(exc).__name__
-        console.print(f"[red]error:[/] {escape(message)}")
+        error_console.print(f"[red]error:[/] {escape(message)}")
         sys.exit(2)
 
 

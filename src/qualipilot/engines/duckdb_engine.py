@@ -14,6 +14,7 @@ from qualipilot.engines._file_formats import (
 )
 from qualipilot.engines.base import (
     Engine,
+    as_utc_datetime,
     reject_nested_columns,
     validate_column_names,
     validate_pandas_columns,
@@ -375,6 +376,39 @@ class DuckDBEngine(Engine):
         return self._scalar(
             f"SELECT MAX({quote_identifier(column)}) "
             f"FROM {quote_identifier(self._view)}"
+        )
+
+    def max_datetime_instant(
+        self,
+        column: str,
+        naive_timezone: str = "UTC",
+    ) -> Any:
+        if self.dtypes()[column].split("(")[0] != "VARCHAR":
+            return super().max_datetime_instant(column, naive_timezone)
+
+        identifier = quote_identifier(column)
+        text = f"trim(CAST({identifier} AS VARCHAR))"
+        offset_pattern = quote_literal(r"(?:[zZ]|[+-]\d{2}:?\d{2})$")
+        has_offset = f"regexp_matches({text}, {offset_pattern})"
+        parsed = (
+            f"CASE WHEN {has_offset} "
+            f"THEN TRY_CAST({text} AS TIMESTAMPTZ) "
+            f"ELSE timezone({quote_literal(naive_timezone)}, "
+            f"TRY_CAST({text} AS TIMESTAMP)) END"
+        )
+        max_timestamp, invalid_count = self._row(
+            f"SELECT MAX({parsed}), COUNT(*) FILTER ("
+            f"WHERE {identifier} IS NOT NULL AND {parsed} IS NULL) "
+            f"FROM {quote_identifier(self._view)}"
+        )
+        if invalid_count:
+            raise ValueError(
+                f"freshness column {column!r} contains invalid timestamps"
+            )
+        return (
+            None
+            if max_timestamp is None
+            else as_utc_datetime(max_timestamp, "UTC")
         )
 
     # ---- internals -----------------------------------------------------

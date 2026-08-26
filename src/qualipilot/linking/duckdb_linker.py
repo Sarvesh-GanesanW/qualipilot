@@ -22,7 +22,11 @@ from qualipilot.linking.comparisons import (
     NumericDiff,
 )
 from qualipilot.linking.config import LinkConfig
-from qualipilot.linking.em import estimate_parameters, score_pairs
+from qualipilot.linking.em import (
+    build_fit_diagnostics,
+    estimate_parameters,
+    score_pairs,
+)
 from qualipilot.linking.linker import (
     LinkageResult,
     _build_scored_pairs,
@@ -199,11 +203,27 @@ def _run_with_connection(  # noqa: PLR0915
         max_iter=config.em_max_iter,
         tol=config.em_tolerance,
     )
+    fit = build_fit_diagnostics(
+        params,
+        n_levels,
+        [comparison.column for comparison in config.comparisons],
+        sampled_pair_count=em_levels.shape[0],
+        candidate_pair_count=n_pairs,
+    )
     timings["em_ms"] = _ms_since(t0)
 
     # ---- score + cluster -------------------------------------------
     t0 = time.perf_counter()
-    probs = score_pairs(levels, params["m"], params["u"], params["lambda"])
+    if fit["status"] != "rejected":
+        probs = score_pairs(
+            levels,
+            params["m"],
+            params["u"],
+            params["lambda"],
+        )
+    else:
+        logger.error("unsafe linkage fit rejected: %s", fit["reason"])
+        probs = np.zeros(levels.shape[0], dtype=np.float32)
     timings["score_ms"] = _ms_since(t0)
 
     decorated = cast(pl.DataFrame, pl.from_arrow(pair_df))
@@ -235,8 +255,11 @@ def _run_with_connection(  # noqa: PLR0915
         pairs=scored,
         clusters=clusters,
         parameters={
-            **params,
+            "m": params["m"],
+            "u": params["u"],
+            "lambda": params["lambda"],
             "threshold": config.match_threshold_probability,
+            "fit": fit,
         },
         timings_ms=timings,
     )

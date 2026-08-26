@@ -52,7 +52,15 @@ check-specific fields in compatible releases.
 
 - Configuration files are loaded only with `--config`; working-directory
   discovery was removed to prevent implicit network calls and file writes.
-- Enabled LLM providers require an explicit model.
+- Enabled LLM providers, including managed GZ connections, require an
+  explicit model. Qualipilot does not guess one because provider model
+  lifecycles change; verify configured Gemini models against the
+  [official deprecation schedule](https://ai.google.dev/gemini-api/docs/deprecations).
+- GZ Hugging Face connections must also expose either a complete
+  `inferenceEndpointUrl` or an `inferenceBaseUrl`. For the serverless
+  HF Inference provider, use the current
+  [official endpoint format](https://huggingface.co/docs/inference-providers/providers/hf-inference)
+  instead of relying on a legacy default.
 - `--api-key` was removed to keep secrets out of process listings. Use
   `QUALIPILOT_LLM__API_KEY` or a protected explicit config file.
 - Config-file logging fields were removed. Use global CLI logging flags or

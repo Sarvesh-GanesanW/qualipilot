@@ -99,6 +99,39 @@ def test_check_column_names_are_normalized() -> None:
     assert config.column_ranges == {"amount": ColumnRange(min=0, max=1)}
 
 
+def test_severity_overrides_parse_from_config_file(tmp_path: Path) -> None:
+    path = tmp_path / "qualipilot.yaml"
+    path.write_text(
+        "checks:\n"
+        "  severity_overrides:\n"
+        "    missing_values: error\n"
+        "    ranges: warn\n",
+        encoding="utf-8",
+    )
+
+    config = QualipilotConfig.from_file(path)
+
+    assert config.checks.severity_overrides == {
+        "missing_values": "error",
+        "ranges": "warn",
+    }
+
+
+@pytest.mark.parametrize(
+    "severity_overrides",
+    [
+        {"custom_check": "warn"},
+        {"missing_values": "critical"},
+        {"missing_values": "WARN"},
+    ],
+)
+def test_severity_overrides_reject_unknown_names_and_values(
+    severity_overrides: dict[str, str],
+) -> None:
+    with pytest.raises(ValidationError, match="severity_overrides"):
+        CheckConfig.model_validate({"severity_overrides": severity_overrides})
+
+
 @pytest.mark.parametrize(
     "values",
     [

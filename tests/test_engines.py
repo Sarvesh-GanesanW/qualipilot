@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
 
@@ -513,6 +513,104 @@ def test_date32_parquet_supports_default_freshness(
 
     assert freshness.status == "completed"
     assert freshness.severity == "ok"
+
+
+def test_string_datetime_max_uses_instants_across_engines(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "offsets.csv"
+    path.write_text(
+        "event_ts\n2026-08-26T00:00:00+14:00\n2026-08-25T23:30:00-12:00\n",
+        encoding="utf-8",
+    )
+    expected = datetime(2026, 8, 26, 11, 30, tzinfo=UTC)
+
+    for engine_cls in (
+        PolarsEngine,
+        PandasEngine,
+        DuckDBEngine,
+        DaskEngine,
+    ):
+        engine = engine_cls.from_any(path)
+        try:
+            assert engine.max_datetime_instant("event_ts") == expected
+        finally:
+            close = getattr(engine, "close", None)
+            if close is not None:
+                close()
+
+
+def test_object_numeric_and_date_families_match_across_engines() -> None:
+    frame = pd.DataFrame(
+        {
+            "amount": pd.Series([1, 2], dtype=object),
+            "event_date": pd.Series(
+                [date(2026, 8, 25), date(2026, 8, 26)],
+                dtype=object,
+            ),
+        }
+    )
+
+    for engine_cls in (
+        PolarsEngine,
+        PandasEngine,
+        DuckDBEngine,
+        DaskEngine,
+    ):
+        engine = engine_cls.from_any(frame)
+        try:
+            assert engine.dtype_family("amount") == "integer"
+            assert engine.numeric_columns() == ["amount"]
+            assert engine.count_outside("amount", 0, 10) == 0
+            assert engine.dtype_family("event_date") == "date"
+            assert engine.datetime_columns() == ["event_date"]
+        finally:
+            close = getattr(engine, "close", None)
+            if close is not None:
+                close()
+
+
+def test_portable_dtype_contract_matches_every_engine() -> None:
+    frame = pd.DataFrame(
+        {
+            "id": [1, 2],
+            "name": ["Alice", "Bob"],
+            "active": [True, False],
+            "segment": pd.Series(["retail", "business"], dtype="category"),
+            "event_ts": pd.to_datetime(
+                ["2026-08-25T00:00:00Z", "2026-08-26T00:00:00Z"]
+            ),
+        }
+    )
+    checks = CheckConfig(
+        missing_values=False,
+        duplicates=False,
+        data_types=False,
+        outliers=False,
+        ranges=False,
+        cardinality=False,
+        expected_dtypes={
+            "id": "integer",
+            "name": "string",
+            "active": "boolean",
+            "segment": "categorical",
+            "event_ts": "datetime",
+        },
+    )
+
+    for kind in ("polars", "pandas", "duckdb", "dask"):
+        with DataQualityChecker(
+            frame,
+            QualipilotConfig(engine=kind, checks=checks),  # type: ignore[arg-type]
+        ) as checker:
+            report = checker.run(include_llm=False)
+        contract = next(
+            result
+            for result in report.results
+            if result.name == "dataset_contract"
+        )
+        assert contract.severity == "ok"
+        assert contract.payload["dtype_mismatches"] == []
 
 
 def test_nan_and_null_are_the_same_duplicate_key() -> None:

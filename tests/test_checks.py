@@ -85,6 +85,54 @@ def test_missing_check_ok_when_clean(
     assert result.payload["total_null_count"] == 0
 
 
+def test_severity_overrides_apply_to_completed_failures(
+    dirty_pandas: pd.DataFrame,
+) -> None:
+    config = CheckConfig(
+        column_ranges={"amount": ColumnRange(min=0, max=100)},
+        severity_overrides={
+            "missing_values": "error",
+            "ranges": "warn",
+            "duplicates": "ok",
+        },
+    )
+
+    assert MissingValuesCheck().run(_ctx(dirty_pandas, config)).severity == (
+        "error"
+    )
+    assert RangesCheck().run(_ctx(dirty_pandas, config)).severity == "warn"
+    assert DuplicatesCheck().run(_ctx(dirty_pandas, config)).severity == "ok"
+
+
+def test_severity_override_does_not_change_a_success(
+    tidy_pandas: pd.DataFrame,
+) -> None:
+    config = CheckConfig(severity_overrides={"missing_values": "error"})
+
+    result = MissingValuesCheck().run(_ctx(tidy_pandas, config))
+
+    assert result.severity == "ok"
+
+
+def test_severity_override_does_not_hide_execution_failure(
+    tidy_pandas: pd.DataFrame,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = _ctx(
+        tidy_pandas,
+        CheckConfig(severity_overrides={"missing_values": "ok"}),
+    )
+
+    def fail_null_counts() -> dict[str, int]:
+        raise RuntimeError("backend unavailable")
+
+    monkeypatch.setattr(context.engine, "null_counts", fail_null_counts)
+    result = MissingValuesCheck().run(context)
+
+    assert result.status == "failed"
+    assert result.severity == "error"
+
+
 def test_duplicates_flagged(dirty_pandas: pd.DataFrame) -> None:
     result = DuplicatesCheck().run(_ctx(dirty_pandas))
     assert result.severity == "warn"
@@ -107,6 +155,7 @@ def test_data_types_rollup(dirty_pandas: pd.DataFrame) -> None:
 def test_outliers_flagged(dirty_pandas: pd.DataFrame) -> None:
     result = OutliersCheck().run(_ctx(dirty_pandas))
     assert result.severity == "warn"
+    assert result.payload["quantile_provenance"] == {"method": "exact"}
     per_col = result.payload["per_column"]
     amount = next(c for c in per_col if c["column"] == "amount")
     assert amount["outlier_count"] >= 1
@@ -235,6 +284,42 @@ def test_freshness_rejects_future_data() -> None:
 
     assert result.severity == "error"
     assert result.payload["per_column"][0]["is_future"] is True
+
+
+def test_freshness_fails_closed_without_a_temporal_target() -> None:
+    config = CheckConfig(freshness=True)
+
+    result = FreshnessCheck().run(_ctx(pd.DataFrame({"id": [1, 2]}), config))
+
+    assert result.status == "completed"
+    assert result.severity == "error"
+    assert result.payload == {
+        "per_column": [],
+        "note": (
+            "freshness is enabled but no datetime columns were configured "
+            "or detected"
+        ),
+    }
+
+
+def test_freshness_reports_a_missing_configured_column() -> None:
+    config = CheckConfig(
+        freshness=True,
+        freshness_columns=["event_ts"],
+    )
+
+    result = FreshnessCheck().run(_ctx(pd.DataFrame({"id": [1]}), config))
+
+    assert result.status == "completed"
+    assert result.severity == "error"
+    assert result.payload["per_column"] == [
+        {
+            "column": "event_ts",
+            "max_timestamp": None,
+            "is_stale": True,
+            "note": "column not present in dataset",
+        }
+    ]
 
 
 @pytest.mark.parametrize(

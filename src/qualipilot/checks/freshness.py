@@ -9,9 +9,9 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from typing import Any
-from zoneinfo import ZoneInfo
 
 from qualipilot.checks.base import Check, CheckContext
+from qualipilot.engines.base import as_utc_datetime
 from qualipilot.models.results import Severity
 
 
@@ -21,7 +21,13 @@ class FreshnessCheck(Check):
     def _execute(self, ctx: CheckContext) -> tuple[Severity, dict[str, Any]]:
         cols = ctx.config.freshness_columns or ctx.engine.datetime_columns()
         if not cols:
-            return "ok", {"per_column": []}
+            return "error", {
+                "per_column": [],
+                "note": (
+                    "freshness is enabled but no datetime columns were "
+                    "configured or detected"
+                ),
+            }
 
         max_age = timedelta(hours=ctx.config.freshness_max_age_hours)
         future_tolerance = timedelta(
@@ -30,9 +36,26 @@ class FreshnessCheck(Check):
         now = datetime.now(UTC)
         report: list[dict[str, Any]] = []
         has_error = False
+        columns = set(
+            ctx.columns if ctx.columns is not None else ctx.engine.columns()
+        )
 
         for col in cols:
-            max_ts = ctx.engine.max_datetime(col)
+            if col not in columns:
+                report.append(
+                    {
+                        "column": col,
+                        "max_timestamp": None,
+                        "is_stale": True,
+                        "note": "column not present in dataset",
+                    }
+                )
+                has_error = True
+                continue
+            max_ts = ctx.engine.max_datetime_instant(
+                col,
+                ctx.config.freshness_timezone,
+            )
             if max_ts is None:
                 report.append(
                     {
@@ -67,16 +90,4 @@ class FreshnessCheck(Check):
 
 def _as_aware(value: Any, naive_timezone: str = "UTC") -> datetime:
     """Coerce engine-returned timestamps into timezone-aware datetime."""
-    # pandas.Timestamp, polars Datetime and stdlib datetime all satisfy
-    # the duck-typing we need; pandas ts has .to_pydatetime()
-    dt: datetime
-    if hasattr(value, "to_pydatetime"):
-        dt = value.to_pydatetime()
-    elif isinstance(value, datetime):
-        dt = value
-    else:
-        dt = datetime.fromisoformat(str(value))
-
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=ZoneInfo(naive_timezone))
-    return dt
+    return as_utc_datetime(value, naive_timezone)

@@ -4,6 +4,8 @@
 # usage:
 #     ./install.sh
 #     ./install.sh --bedrock
+#     ./install.sh --gz
+#     ./install.sh --ner
 #     ./install.sh --linking --duckdb
 #     ./install.sh --all
 #     ./install.sh --dev
@@ -18,6 +20,8 @@ for arg in "$@"; do
     case "${arg}" in
         --bedrock) EXTRAS+=("bedrock") ;;
         --dask) EXTRAS+=("dask") ;;
+        --gz) EXTRAS+=("gz") ;;
+        --ner) EXTRAS+=("ner") ;;
         --ollama) EXTRAS+=("ollama") ;;
         --openai) EXTRAS+=("openai") ;;
         --linking) EXTRAS+=("linking") ;;
@@ -63,9 +67,10 @@ then
     exit 1
 fi
 
-if ! command -v uv >/dev/null 2>&1; then
-    echo "uv not found; installing uv 0.11.21"
-    python -m pip install "uv==0.11.21"
+UV_VERSION=0.11.21
+if [[ "$(uv --version 2>/dev/null || true)" != "uv ${UV_VERSION}"* ]]; then
+    echo "installing uv ${UV_VERSION}"
+    python -m pip install "uv==${UV_VERSION}"
 fi
 
 SYNC_ARGS=(sync --locked --active)

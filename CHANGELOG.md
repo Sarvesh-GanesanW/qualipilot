@@ -4,6 +4,12 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Optional spaCy named-entity extraction API and CLI with batched processing,
+  character offsets, model/source provenance, label filtering, and atomic JSON
+  audits.
+
 ## [3.1.1] - 2026-08-05
 
 ### Added

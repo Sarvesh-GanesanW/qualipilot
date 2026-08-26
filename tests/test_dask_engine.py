@@ -12,8 +12,21 @@ import pandas as pd
 import pyarrow as pa
 import pytest
 
+from qualipilot.checks import CheckContext, OutliersCheck
+from qualipilot.models.config import CheckConfig
+
 dd = pytest.importorskip("dask.dataframe")
 DaskEngine = pytest.importorskip("qualipilot.engines.dask_engine").DaskEngine
+
+
+def test_outlier_payload_marks_quantiles_as_approximate() -> None:
+    engine = DaskEngine.from_any(pd.DataFrame({"value": [0.0, 1.0, 2.0]}))
+
+    result = OutliersCheck().run(
+        CheckContext(engine=engine, config=CheckConfig())
+    )
+
+    assert result.payload["quantile_provenance"] == {"method": "approximate"}
 
 
 def test_duplicates_are_global_across_partitions() -> None:

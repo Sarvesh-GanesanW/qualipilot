@@ -56,10 +56,10 @@ def test_module_cli_renders_data_errors_without_traceback(
         text=True,
     )
 
-    output = completed.stdout + completed.stderr
     assert completed.returncode == 2
-    assert "column names must be unique" in output
-    assert "Traceback" not in output
+    assert "column names must be unique" in completed.stderr
+    assert "column names must be unique" not in completed.stdout
+    assert "Traceback" not in completed.stderr
 
 
 def test_version_flag() -> None:

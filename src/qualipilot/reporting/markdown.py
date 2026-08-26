@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import html
+import json
 from typing import Any
 
 from qualipilot.models.results import CheckResult, QualityReport
@@ -95,6 +96,18 @@ def _append_payload_details(parts: list[str], result: CheckResult) -> None:
         _freshness_section(parts, payload)
     elif name == "linkage":
         _linkage_section(parts, payload)
+
+    parts.append("")
+    parts.append("Raw payload:")
+    parts.append("")
+    parts.extend(
+        f"    {_markdown_text(line)}"
+        for line in json.dumps(
+            payload,
+            indent=2,
+            ensure_ascii=False,
+        ).splitlines()
+    )
 
 
 def _missing_section(parts: list[str], payload: dict[str, Any]) -> None:

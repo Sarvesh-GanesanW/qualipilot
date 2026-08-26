@@ -1,10 +1,11 @@
 # qualipilot
 
-Qualipilot runs configurable checks over tabular data and returns typed
-JSON, HTML, or Markdown reports. It supports CSV, Parquet, JSONL, and NDJSON
-files plus several dataframe backends. Columns must contain scalar values;
-flatten nested arrays, maps, and objects before checking. LLM-generated
-narrative is optional and disabled by default.
+Qualipilot runs configurable data-quality checks, probabilistic record
+linkage, and named-entity extraction over tabular data. Quality checks return
+typed JSON, HTML, or Markdown reports. CSV, Parquet, JSONL, and NDJSON are
+supported across several dataframe backends. Columns must contain scalar
+values; flatten nested arrays, maps, and objects before checking.
+LLM-generated narrative is optional and disabled by default.
 
 The project is beta software. Validate check semantics and performance
 against representative data before using report severities as a release
@@ -23,6 +24,7 @@ pip install "qualipilot[dask]"          # Dask engine
 pip install "qualipilot[duckdb]"        # DuckDB engine
 pip install "qualipilot[gz]"            # GroundZero managed LLM connections
 pip install "qualipilot[linking]"       # probabilistic linkage
+pip install "qualipilot[ner]"           # spaCy NER adapter
 pip install "qualipilot[spark]"         # Spark engine
 ```
 
@@ -142,6 +144,17 @@ report = DataQualityChecker(
 Each check produces a `CheckResult` with an `ok`, `warn`, or `error`
 severity, execution status, duration, and JSON-safe payload.
 
+Use `checks.severity_overrides` to replace the severity of a built-in check
+when it finds a problem, for example `{"missing_values": "error", "ranges":
+"warn"}`. Overrides do not turn successful checks into failures and cannot
+hide execution failures. Outlier payloads identify whether their quantiles
+are exact or approximate; Spark also reports its `0.001` relative error.
+
+`expected_dtypes` accepts portable families: `integer`, `float`, `decimal`,
+`numeric`, `boolean`, `string`, `categorical`, `binary`, `date`, `datetime`,
+`time`, and `duration`. Native engine dtype names remain supported with a
+case-insensitive exact match.
+
 ## Engines
 
 | Engine | Extra | Notes |
@@ -219,6 +232,30 @@ survivor ranking, and conflict resolution remain domain-specific. Review
 [the linkage guide](https://github.com/Sarvesh-GanesanW/qualipilot/blob/main/docs/LINKING.md)
 before using clusters operationally.
 
+## Named-entity recognition
+
+NER is a separate, optional local pipeline rather than a data-quality check.
+Install spaCy through the `ner` extra and install a pipeline that matches your
+language and domain. Qualipilot never downloads or silently selects a model:
+
+```bash
+pip install "qualipilot[ner]"
+python -m spacy download en_core_web_sm  # convenient for local evaluation
+
+qualipilot ner customer_notes.parquet \
+  --text note \
+  --id customer_id \
+  --model en_core_web_sm \
+  --output reports/customer-notes.entities.json
+```
+
+The audit contains source and model provenance, row identifiers, labels,
+entity text, and half-open character offsets. The Python API batches documents
+through `SpacyEntityRecognizer.extract_many()`. Statistical NER is
+domain-dependent, so evaluate the pinned pipeline against representative
+labeled data before using its output. See the
+[NER guide](https://github.com/Sarvesh-GanesanW/qualipilot/blob/main/docs/NER.md).
+
 ## Deployment and development
 
 The repository includes locked Docker builds and a Terraform module for an
@@ -241,6 +278,7 @@ Additional documentation:
 
 - [Architecture](https://github.com/Sarvesh-GanesanW/qualipilot/blob/main/docs/ARCHITECTURE.md)
 - [Deployment](https://github.com/Sarvesh-GanesanW/qualipilot/blob/main/docs/DEPLOY.md)
+- [Named-entity recognition](https://github.com/Sarvesh-GanesanW/qualipilot/blob/main/docs/NER.md)
 - [Migrating from 2.x](https://github.com/Sarvesh-GanesanW/qualipilot/blob/main/docs/MIGRATION.md)
 - [Changelog](https://github.com/Sarvesh-GanesanW/qualipilot/blob/main/CHANGELOG.md)
 

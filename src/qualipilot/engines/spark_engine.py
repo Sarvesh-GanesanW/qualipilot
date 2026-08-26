@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -19,6 +20,8 @@ from qualipilot.engines.base import (
 if TYPE_CHECKING:  # keep the type checker happy without imports
     from pyspark.sql import DataFrame as SparkDataFrame
     from pyspark.sql import SparkSession
+
+_QUANTILE_RELATIVE_ERROR = 0.001
 
 
 def _require_spark() -> None:
@@ -260,7 +263,7 @@ class SparkEngine(Engine):
         values = self._df.select(*expressions).approxQuantile(
             aliases,
             list(qs),
-            0.001,
+            _QUANTILE_RELATIVE_ERROR,
         )
         for col, vals in zip(columns, values, strict=True):
             for index, q in enumerate(qs):
@@ -269,6 +272,13 @@ class SparkEngine(Engine):
                     float(value) if value is not None else float("nan")
                 )
         return out
+
+    @property
+    def quantile_provenance(self) -> dict[str, str | float]:
+        return {
+            "method": "approximate",
+            "relative_error": _QUANTILE_RELATIVE_ERROR,
+        }
 
     # ---- filters ------------------------------------------------------
 
@@ -342,6 +352,56 @@ class SparkEngine(Engine):
         from pyspark.sql import functions as F
 
         return self._df.agg(F.max(_spark_col(column))).collect()[0][0]
+
+    def max_datetime_instant(
+        self,
+        column: str,
+        naive_timezone: str = "UTC",
+    ) -> Any:
+        from pyspark.sql import functions as F
+
+        value = _spark_col(column)
+        dtype = self.dtypes()[column]
+        invalid = F.lit(False)
+        if dtype == "string":
+            text = F.trim(value)
+            has_offset = text.rlike(r"(?:[zZ]|[+-]\d{2}:?\d{2})$")
+            parsed = F.when(
+                has_offset,
+                F.to_timestamp_ltz(text),
+            ).otherwise(
+                F.to_utc_timestamp(
+                    F.to_timestamp_ntz(text),
+                    naive_timezone,
+                )
+            )
+            invalid = value.isNotNull() & parsed.isNull()
+        elif dtype == "timestamp":
+            parsed = value
+        elif dtype == "timestamp_ntz":
+            parsed = F.to_utc_timestamp(value, naive_timezone)
+        elif dtype == "date":
+            parsed = F.to_utc_timestamp(
+                value.cast("timestamp_ntz"),
+                naive_timezone,
+            )
+        else:
+            return super().max_datetime_instant(column, naive_timezone)
+
+        row = self._df.agg(
+            F.max(F.unix_micros(parsed)).alias("max_micros"),
+            F.sum(invalid.cast("long")).alias("invalid_count"),
+        ).collect()[0]
+        if row["invalid_count"]:
+            raise ValueError(
+                f"freshness column {column!r} contains invalid timestamps"
+            )
+        micros = row["max_micros"]
+        return (
+            None
+            if micros is None
+            else datetime.fromtimestamp(micros / 1_000_000, UTC)
+        )
 
     def _outside_mask(self, column: str, low: float, high: float) -> Any:
         from pyspark.sql import functions as F

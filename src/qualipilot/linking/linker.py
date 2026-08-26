@@ -28,7 +28,11 @@ from qualipilot.linking.consolidate import (
     _validate_consolidation_frame,
     consolidate_records,
 )
-from qualipilot.linking.em import estimate_parameters, score_pairs
+from qualipilot.linking.em import (
+    build_fit_diagnostics,
+    estimate_parameters,
+    score_pairs,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -44,13 +48,64 @@ class LinkageResult:
 
     def match_pairs(self, threshold: float) -> pl.DataFrame:
         """Return only pairs above the given probability threshold."""
-        if not math.isfinite(threshold) or not 0 <= threshold <= 1:
-            raise ValueError("threshold must be finite and between 0 and 1")
+        _validate_probability_threshold(threshold)
         return self.pairs.filter(pl.col("match_probability") >= threshold)
+
+    def evaluate_labeled_pairs(
+        self,
+        labels: pl.DataFrame,
+        *,
+        threshold: float,
+    ) -> dict[str, int | float]:
+        """Evaluate edge predictions against unique boolean pair labels.
+
+        Labels require ``__id_l__``, ``__id_r__``, and boolean ``is_match``
+        columns. A labeled pair omitted by blocking is a negative prediction.
+        """
+        _validate_probability_threshold(threshold)
+        _validate_pair_labels(labels, self.pairs)
+        id_columns = ["__id_l__", "__id_r__"]
+        evaluated = labels.select([*id_columns, "is_match"]).join(
+            self.pairs.select([*id_columns, "match_probability"]),
+            on=id_columns,
+            how="left",
+        )
+        probability = evaluated["match_probability"]
+        predicted_match = (
+            probability.is_not_null()
+            & probability.fill_null(0.0).ge(threshold)
+        ).to_numpy()
+        is_match = evaluated["is_match"].to_numpy()
+        tp = int(np.sum(predicted_match & is_match))
+        fp = int(np.sum(predicted_match & ~is_match))
+        tn = int(np.sum(~predicted_match & ~is_match))
+        fn = int(np.sum(~predicted_match & is_match))
+        precision = tp / (tp + fp) if tp + fp else 0.0
+        recall = tp / (tp + fn) if tp + fn else 0.0
+        f1 = 2 * tp / (2 * tp + fp + fn) if tp + fp + fn else 0.0
+        return {
+            "threshold": float(threshold),
+            "labeled_pairs": labels.height,
+            "tp": tp,
+            "fp": fp,
+            "tn": tn,
+            "fn": fn,
+            "precision": precision,
+            "recall": recall,
+            "f1": f1,
+        }
 
     def summary(self) -> dict[str, Any]:
         total = self.pairs.height
         threshold = float(self.parameters.get("threshold", 0.9))
+        fit = self.parameters.get("fit", {})
+        fit_status = (
+            fit.get("status", "unknown")
+            if isinstance(fit, dict)
+            else "unknown"
+        )
+        fit_reason = fit.get("reason") if isinstance(fit, dict) else None
+        fit_warnings = fit.get("warnings", []) if isinstance(fit, dict) else []
         matches = int(
             self.pairs.get_column("match_probability").ge(threshold).sum()
         )
@@ -64,6 +119,9 @@ class LinkageResult:
             "clusters": cluster_count,
             "timings_ms": self.timings_ms,
             "lambda": float(self.parameters.get("lambda", 0.0)),
+            "fit_status": fit_status,
+            "fit_reason": fit_reason,
+            "fit_warnings": fit_warnings,
         }
 
 
@@ -73,6 +131,51 @@ class DeduplicationResult:
 
     linkage: LinkageResult
     consolidation: ConsolidationResult
+
+
+def _validate_probability_threshold(threshold: float) -> None:
+    if not math.isfinite(threshold) or not 0 <= threshold <= 1:
+        raise ValueError("threshold must be finite and between 0 and 1")
+
+
+def _validate_pair_labels(
+    labels: pl.DataFrame,
+    result_pairs: pl.DataFrame,
+) -> None:
+    if not isinstance(labels, pl.DataFrame):
+        raise TypeError("labels must be a Polars DataFrame")
+    id_columns = ["__id_l__", "__id_r__"]
+    required = {*id_columns, "is_match"}
+    missing = sorted(required - set(labels.columns))
+    if missing:
+        raise ValueError(f"labels are missing required columns: {missing}")
+    if labels.is_empty():
+        raise ValueError("labels must contain at least one pair")
+    if labels.schema["is_match"] != pl.Boolean:
+        raise ValueError("labels column 'is_match' must have Boolean dtype")
+    if labels["is_match"].null_count():
+        raise ValueError("labels column 'is_match' must not contain nulls")
+    if any(labels[column].null_count() for column in id_columns):
+        raise ValueError("label pair IDs must not contain nulls")
+    if labels.select(id_columns).is_duplicated().any():
+        raise ValueError("label pairs must be unique")
+    result_missing = sorted(
+        {*id_columns, "match_probability"} - set(result_pairs.columns)
+    )
+    if result_missing:
+        raise ValueError(
+            f"linkage result is missing required columns: {result_missing}"
+        )
+    incompatible = [
+        column
+        for column in id_columns
+        if labels.schema[column] != result_pairs.schema[column]
+    ]
+    if incompatible:
+        raise ValueError(
+            "label pair ID dtypes must match the linkage result: "
+            f"{incompatible}"
+        )
 
 
 class RecordLinker:
@@ -204,10 +307,26 @@ class RecordLinker:
             max_iter=self.config.em_max_iter,
             tol=self.config.em_tolerance,
         )
+        fit = build_fit_diagnostics(
+            params,
+            n_levels,
+            [comparison.column for comparison in self.config.comparisons],
+            sampled_pair_count=em_levels.shape[0],
+            candidate_pair_count=levels.shape[0],
+        )
         timings["em_ms"] = _ms_since(t0)
 
         t0 = time.perf_counter()
-        probs = score_pairs(levels, params["m"], params["u"], params["lambda"])
+        if fit["status"] != "rejected":
+            probs = score_pairs(
+                levels,
+                params["m"],
+                params["u"],
+                params["lambda"],
+            )
+        else:
+            logger.error("unsafe linkage fit rejected: %s", fit["reason"])
+            probs = np.zeros(levels.shape[0], dtype=np.float32)
         timings["score_ms"] = _ms_since(t0)
 
         scored = _build_scored_pairs(
@@ -229,8 +348,11 @@ class RecordLinker:
             pairs=scored,
             clusters=clusters,
             parameters={
-                **params,
+                "m": params["m"],
+                "u": params["u"],
+                "lambda": params["lambda"],
                 "threshold": self.config.match_threshold_probability,
+                "fit": fit,
             },
             timings_ms=timings,
         )
@@ -250,6 +372,12 @@ class RecordLinker:
             consolidation,
         )
         linkage = self.run()
+        fit = linkage.parameters.get("fit")
+        if isinstance(fit, dict) and fit.get("status") == "rejected":
+            raise ValueError(
+                "cannot consolidate records with a rejected linkage fit: "
+                f"{fit.get('reason', 'unsafe model parameters')}"
+            )
         return DeduplicationResult(
             linkage=linkage,
             consolidation=consolidate_records(
@@ -641,6 +769,22 @@ def _empty_linkage_result(
         parameters={
             "lambda": 0.0,
             "threshold": config.match_threshold_probability,
+            "fit": {
+                "status": "not_fitted",
+                "reason": "no candidate pairs",
+                "warnings": [],
+                "converged": False,
+                "iterations": 0,
+                "max_parameter_delta": None,
+                "candidate_pair_count": 0,
+                "sampled_pair_count": 0,
+                "informative_comparisons": [],
+                "usable_comparisons": [],
+                "neutral_comparisons": [
+                    comparison.column for comparison in config.comparisons
+                ],
+                "inverted_comparisons": [],
+            },
         },
         timings_ms=timings,
     )

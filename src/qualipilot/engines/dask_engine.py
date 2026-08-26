@@ -17,10 +17,12 @@ from qualipilot.engines._file_formats import (
 )
 from qualipilot.engines.base import (
     Engine,
+    as_utc_datetime,
     is_date_arrow_dtype,
     is_decimal_arrow_dtype,
     is_nested_arrow_dtype,
     is_unsupported_pandas_dtype,
+    object_dtype_family,
     reject_nested_columns,
     validate_column_names,
     validate_pandas_columns,
@@ -56,7 +58,7 @@ class DaskEngine(Engine):
             )
         (
             nested_object_columns,
-            self._decimal_object_columns,
+            self._object_families,
             unsupported_object_columns,
         ) = _inspect_object_columns(df)
         reject_nested_columns(
@@ -155,33 +157,25 @@ class DaskEngine(Engine):
     def dtypes(self) -> dict[str, str]:
         return {c: str(dt) for c, dt in self._df.dtypes.items()}
 
+    def dtype_family(self, column: str) -> str:
+        families = self._object_families.get(column)
+        if families is not None:
+            return object_dtype_family(families)
+        return super().dtype_family(column)
+
     def numeric_columns(self) -> list[str]:
-        columns = [
+        return [
             column
-            for column in self._df.select_dtypes(include="number").columns
-            if not pd.api.types.is_timedelta64_dtype(self._df.dtypes[column])
+            for column in self._df.columns
+            if self.dtype_family(column) in {"integer", "float", "decimal"}
         ]
-        columns.extend(
-            column
-            for column, dtype in self._df.dtypes.items()
-            if column not in columns
-            and (
-                is_decimal_arrow_dtype(dtype)
-                or column in self._decimal_object_columns
-            )
-        )
-        return columns
 
     def datetime_columns(self) -> list[str]:
-        columns = list(
-            self._df.select_dtypes(include=["datetime", "datetimetz"]).columns
-        )
-        columns.extend(
+        return [
             column
-            for column, dtype in self._df.dtypes.items()
-            if column not in columns and is_date_arrow_dtype(dtype)
-        )
-        return columns
+            for column in self._df.columns
+            if self.dtype_family(column) in {"date", "datetime"}
+        ]
 
     def null_counts(self) -> dict[str, int]:
         result = self._df.isna().sum().compute()
@@ -269,6 +263,10 @@ class DaskEngine(Engine):
                 )
         return out
 
+    @property
+    def quantile_provenance(self) -> dict[str, str | float]:
+        return {"method": "approximate"}
+
     def duplicate_count(self, subset: list[str] | None = None) -> int:
         counts, count_column = self._duplicate_counts(subset)
         duplicate_rows = counts[counts[count_column] > 1][count_column].sum()
@@ -349,6 +347,26 @@ class DaskEngine(Engine):
         val = series.max().compute()
         return None if pd.isna(val) else val
 
+    def max_datetime_instant(
+        self,
+        column: str,
+        naive_timezone: str = "UTC",
+    ) -> Any:
+        series = self._df[column]
+        if not (
+            pd.api.types.is_object_dtype(series.dtype)
+            or isinstance(series.dtype, pd.StringDtype)
+        ):
+            return super().max_datetime_instant(column, naive_timezone)
+        maxima = series.map_partitions(
+            _datetime_partition_max,
+            naive_timezone,
+            meta=pd.Series(dtype="datetime64[ns, UTC]"),
+            clear_divisions=True,
+        )
+        value = maxima.max().compute()
+        return None if pd.isna(value) else as_utc_datetime(value, "UTC")
+
     def _duplicate_counts(
         self,
         subset: list[str] | None,
@@ -368,19 +386,19 @@ class DaskEngine(Engine):
 
 def _inspect_object_columns(
     frame: dd.DataFrame,
-) -> tuple[list[str], set[str], list[str]]:
+) -> tuple[list[str], dict[str, set[str]], list[str]]:
     object_columns = [
         column
         for column, dtype in frame.dtypes.items()
         if pd.api.types.is_object_dtype(dtype)
     ]
     if not object_columns:
-        return [], set(), []
+        return [], {}, []
     results = dd.compute(  # type: ignore[no-untyped-call]
         *(_object_stats(frame[column]) for column in object_columns)
     )
     nested: list[str] = []
-    decimals: set[str] = set()
+    object_families: dict[str, set[str]] = {}
     unsupported: list[str] = []
     for column, stats in zip(object_columns, results, strict=True):
         if stats["nested"].any():
@@ -392,12 +410,11 @@ def _inspect_object_columns(
             for family in str(value).split("|")
             if family
         }
-        if families == {"decimal"}:
-            decimals.add(column)
-        elif not _portable_object_families(families):
+        object_families[column] = families
+        if not _portable_object_families(families):
             family = "+".join(sorted(families)) or "empty"
             unsupported.append(f"{column} (object/{family})")
-    return nested, decimals, unsupported
+    return nested, object_families, unsupported
 
 
 def _object_stats(series: Any) -> Any:
@@ -446,4 +463,19 @@ def _portable_object_families(families: set[str]) -> bool:
     return families in (
         {"integer", "floating"},
         {"date", "datetime"},
+    )
+
+
+def _datetime_partition_max(
+    series: pd.Series,
+    naive_timezone: str,
+) -> pd.Series:
+    values = (
+        as_utc_datetime(value, naive_timezone)
+        for value in series
+        if not pd.isna(value)
+    )
+    return pd.Series(
+        [max(values, default=None)],
+        dtype="datetime64[ns, UTC]",
     )

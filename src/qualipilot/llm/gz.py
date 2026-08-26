@@ -44,14 +44,6 @@ _CANONICAL_TYPES = {
     "googlegemini": "gemini",
 }
 
-_DEFAULT_MODELS = {
-    "anthropic": "claude-sonnet-4-5",
-    "cohere": "command-a-03-2025",
-    "gemini": "gemini-2.0-flash",
-    "openai": "gpt-4o-mini",
-    "togetherai": "meta-llama/Llama-3.3-70B-Instruct-Turbo",
-}
-
 _OPENAI_COMPATIBLE = {
     "azureopenai",
     "fireworks",
@@ -219,7 +211,6 @@ def _build_openai_delegate(
     model = _model(
         details,
         raw_connection,
-        _DEFAULT_MODELS.get(connection_type),
         connection_name,
     )
     base_url = _public_text(
@@ -258,7 +249,7 @@ def _build_bedrock_delegate(
     details: Mapping[str, Any],
     raw_connection: Mapping[str, Any],
 ) -> BedrockProvider:
-    model = _model(details, raw_connection, None, connection_name)
+    model = _model(details, raw_connection, connection_name)
     region = _public_text(
         details.get("region") or raw_connection.get("region") or "us-east-1",
         "region",
@@ -312,7 +303,6 @@ def _build_native_http_delegate(
     model = _model(
         details,
         raw_connection,
-        _DEFAULT_MODELS.get(connection_type),
         connection_name,
     )
     api_key = _secret(details.get("apiKey"), "apiKey", connection_name)
@@ -334,19 +324,16 @@ def _build_native_http_delegate(
                 ),
             )
         else:
-            inference_base = (
+            inference_base = _public_text(
                 details.get("inferenceBaseUrl")
-                or raw_connection.get("inferenceBaseUrl")
-                or "https://api-inference.huggingface.co"
+                or raw_connection.get("inferenceBaseUrl"),
+                "inferenceEndpointUrl or inferenceBaseUrl",
+                connection_name,
             )
             base_url = _validated_base_url(
                 cfg,
                 model,
-                _public_text(
-                    inference_base,
-                    "inferenceBaseUrl",
-                    connection_name,
-                ),
+                inference_base,
             )
             request_url = f"{base_url}/models/{quote(model, safe='')}"
         api_version = ""
@@ -547,11 +534,10 @@ def _gemini_model_resource(model: str) -> str:
 def _model(
     details: Mapping[str, Any],
     raw_connection: Mapping[str, Any],
-    default: str | None,
     connection_name: str,
 ) -> str:
     return _public_text(
-        details.get("model") or raw_connection.get("model") or default,
+        details.get("model") or raw_connection.get("model"),
         "model",
         connection_name,
     )

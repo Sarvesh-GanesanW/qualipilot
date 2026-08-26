@@ -286,6 +286,33 @@ def test_llm_prompt_excludes_source_and_values() -> None:
     assert '"status": "failed"' in prompt
 
 
+def test_llm_prompt_bounds_wide_schema_mappings() -> None:
+    dtypes = {f"column_{index}": "Int64" for index in range(10_000)}
+    report = QualityReport(
+        dataset=DatasetStats(
+            row_count=1,
+            column_count=len(dtypes),
+            columns=list(dtypes),
+            dtypes=dtypes,
+            engine="polars",
+        ),
+        results=[
+            CheckResult(
+                name="data_types",
+                severity="ok",
+                duration_seconds=0,
+                payload={"per_column": dtypes},
+            )
+        ],
+    )
+
+    prompt = _build_llm_prompt(report)
+
+    assert len(prompt) < 20_000
+    assert '"omitted_count": 9950' in prompt
+    assert "column_9999" not in prompt
+
+
 def test_result_payload_is_json_safe() -> None:
     result = CheckResult(
         name="binary",

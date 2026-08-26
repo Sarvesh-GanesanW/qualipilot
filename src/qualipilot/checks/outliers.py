@@ -20,7 +20,10 @@ class OutliersCheck(Check):
     def _execute(self, ctx: CheckContext) -> tuple[Severity, dict[str, Any]]:
         numeric = ctx.engine.numeric_columns()
         if not numeric:
-            return "ok", {"per_column": []}
+            return "ok", {
+                "per_column": [],
+                "quantile_provenance": ctx.engine.quantile_provenance,
+            }
 
         qmap = ctx.engine.quantiles(numeric, qs=(0.25, 0.75))
         k = ctx.config.outlier_iqr_multiplier
@@ -77,7 +80,10 @@ class OutliersCheck(Check):
             )
 
         severity: Severity = "warn" if any_outliers else "ok"
-        return severity, {"per_column": report}
+        return severity, {
+            "per_column": report,
+            "quantile_provenance": ctx.engine.quantile_provenance,
+        }
 
 
 def _is_nan(value: float) -> bool:

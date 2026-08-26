@@ -42,6 +42,7 @@ if TYPE_CHECKING:
     from qualipilot.engines.base import Engine
 
 logger = logging.getLogger(__name__)
+_LLM_SUMMARY_LIMIT = 50
 
 
 class DataQualityChecker:
@@ -337,10 +338,22 @@ def _build_llm_prompt(report: QualityReport) -> str:
 
 def _summarise_payload(payload: dict[str, Any]) -> dict[str, Any]:
     """Remove row samples while retaining capped actionable findings."""
-    return {
-        key: _summarise_value(value)
+    filtered = [
+        (key, value)
         for key, value in payload.items()
         if key not in {"sample", "top_values"}
+    ]
+    ordered = sorted(filtered, key=lambda item: not _is_actionable(item[1]))
+    items = {
+        key: _summarise_value(value)
+        for key, value in ordered[:_LLM_SUMMARY_LIMIT]
+    }
+    if len(filtered) <= _LLM_SUMMARY_LIMIT:
+        return items
+    return {
+        "items": items,
+        "total_count": len(filtered),
+        "omitted_count": len(filtered) - _LLM_SUMMARY_LIMIT,
     }
 
 
@@ -350,9 +363,11 @@ def _summarise_value(value: Any) -> Any:
     if isinstance(value, list):
         ordered = sorted(value, key=lambda item: not _is_actionable(item))
         return {
-            "items": [_summarise_value(item) for item in ordered[:50]],
+            "items": [
+                _summarise_value(item) for item in ordered[:_LLM_SUMMARY_LIMIT]
+            ],
             "total_count": len(value),
-            "omitted_count": max(0, len(value) - 50),
+            "omitted_count": max(0, len(value) - _LLM_SUMMARY_LIMIT),
         }
     return value
 

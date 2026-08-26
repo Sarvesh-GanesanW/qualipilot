@@ -29,7 +29,8 @@ for the linker only when exact comparison isn't enough.
    `u` (given a non-match, how likely is this level?). Level 0 is excluded
    from parameter updates and contributes a neutral weight while scoring.
    For other levels, the ratio `log2(m / u)` gives that level's
-   discriminative weight.
+   discriminative weight. A Jeffreys pseudocount keeps learned and scored
+   probabilities away from unjustified exact zero and one.
 4. **Match probability** per pair combines the per-level weights and
    the learned prior λ. Pairs above a threshold form edges; a union-
    find pass yields entity clusters.
@@ -106,6 +107,7 @@ print(result.summary())
 print(result.match_pairs(0.9))  # DataFrame of high-confidence pairs
 print(result.clusters[42])  # cluster id for record 42
 print(result.parameters["m"])  # learned per-level m probs
+print(result.parameters["fit"])  # convergence and fit-safety diagnostics
 print(result.timings_ms)  # stage-by-stage breakdown
 clean.frame.write_parquet("customers.deduplicated.parquet")
 print(clean.lineage)  # source id -> surviving id
@@ -127,6 +129,34 @@ columns and preserves that normalized schema, so normalized string,
 categorical, and enum columns have the `String` dtype. Both paths return one
 row per cluster with source-to-survivor lineage and a metadata-only conflict
 audit.
+
+### Labeled-pair evaluation
+
+[Splink's edge-evaluation guidance](https://moj-analytical-services.github.io/splink/topic_guides/evaluation/edge_overview.html)
+recommends ground-truth labels when measuring precision and recall or choosing
+a match threshold. Evaluate a fixed threshold directly from a linkage result:
+
+```python
+labels = pl.DataFrame(
+    {
+        "__id_l__": [10, 10, 20],
+        "__id_r__": [11, 12, 21],
+        "is_match": [True, False, True],
+    }
+)
+metrics = result.evaluate_labeled_pairs(labels, threshold=0.9)
+print(metrics)
+# {'threshold': 0.9, 'labeled_pairs': 3, 'tp': ..., 'fp': ...,
+#  'tn': ..., 'fn': ..., 'precision': ..., 'recall': ..., 'f1': ...}
+```
+
+Pair IDs must use the same left/right orientation and dtypes as
+`result.pairs`. Each pair must be unique, IDs and labels must be non-null, and
+`is_match` must have Boolean dtype. A labeled pair absent from the candidate
+set is treated as probability zero, so an omitted true match counts as a false
+negative instead of disappearing from recall. Metrics with a zero denominator
+are returned as `0.0`. These are edge metrics; evaluate clusters separately
+when entity grouping is the production output.
 
 ## CLI
 
@@ -188,7 +218,8 @@ checks:
 ```
 
 The result lands in `report.results[...]` with severity `warn` when
-any probable-duplicate cluster is found.
+any probable-duplicate cluster is found. A rejected linkage fit has severity
+`error`.
 
 ## Operational notes
 
@@ -204,6 +235,15 @@ any probable-duplicate cluster is found.
 - EM output and probability thresholds are not automatically calibrated to
   your domain. Evaluate labeled match and non-match pairs, then record the
   chosen configuration with downstream decisions.
+- EM's two latent classes can swap labels or receive no identifying signal on
+  small or homogeneous candidate sets. Qualipilot checks that higher declared
+  agreement levels do not receive lower learned weights and that at least one
+  comparison is informative. An unsafe fit is reported as `rejected`: its
+  candidate probabilities are set to zero, its dedupe clusters remain
+  singletons, and `RecordLinker.deduplicate()` refuses consolidation. A fit
+  that reaches the iteration limit but passes those safety checks is scored
+  with `fit.status == "warning"`; inspect `fit.warnings`, `converged`, and
+  `max_parameter_delta` before production use.
 - Connected components are transitive: if A matches B and B matches C, all
   three records share a cluster even when A-C is below threshold.
 - Use `scripts/bench_linking.py --n <rows>` on representative hardware and

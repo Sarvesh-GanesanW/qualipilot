@@ -34,10 +34,22 @@ from pydantic_settings import (
 )
 
 from qualipilot.linking.config import LinkConfig
+from qualipilot.models.results import Severity
 
 EngineName = Literal["auto", "polars", "pandas", "duckdb", "dask", "spark"]
 LLMProvider = Literal["none", "bedrock", "ollama", "openai", "gz"]
 ReportFormat = Literal["json", "html", "markdown"]
+BuiltInCheckName = Literal[
+    "dataset_contract",
+    "missing_values",
+    "duplicates",
+    "data_types",
+    "outliers",
+    "ranges",
+    "cardinality",
+    "freshness",
+    "linkage",
+]
 
 
 class _DuplicateConfigKeyError(ValueError):
@@ -84,6 +96,9 @@ class CheckConfig(_StrictModel):
     ranges: bool = True
     cardinality: bool = True
     freshness: bool = False
+    severity_overrides: dict[BuiltInCheckName, Severity] = Field(
+        default_factory=dict
+    )
 
     min_rows: int = Field(default=1, ge=0)
     required_columns: list[str] = Field(default_factory=list)

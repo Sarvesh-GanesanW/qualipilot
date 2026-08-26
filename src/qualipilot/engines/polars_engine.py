@@ -213,6 +213,43 @@ class PolarsEngine(Engine):
     def max_datetime(self, column: str) -> Any:
         return self._df.select(pl.col(column).max()).item()
 
+    def max_datetime_instant(
+        self,
+        column: str,
+        naive_timezone: str = "UTC",
+    ) -> Any:
+        if self._df.schema[column] != pl.String:
+            return super().max_datetime_instant(column, naive_timezone)
+
+        text = pl.col(column).str.strip_chars()
+        has_offset = text.str.contains(r"(?:[zZ]|[+-]\d{2}:?\d{2})$")
+        aware = (
+            pl.when(has_offset)
+            .then(text)
+            .otherwise(None)
+            .str.to_datetime(time_zone="UTC", strict=False)
+        )
+        naive = (
+            pl.when(~has_offset)
+            .then(text)
+            .otherwise(None)
+            .str.to_datetime(strict=False)
+            .dt.replace_time_zone(naive_timezone)
+            .dt.convert_time_zone("UTC")
+        )
+        parsed = pl.coalesce(aware, naive)
+        max_timestamp, invalid_count = self._df.select(
+            parsed.max().alias("max_timestamp"),
+            (pl.col(column).is_not_null() & parsed.is_null())
+            .sum()
+            .alias("invalid_count"),
+        ).row(0)
+        if invalid_count:
+            raise ValueError(
+                f"freshness column {column!r} contains invalid timestamps"
+            )
+        return max_timestamp
+
     def _outside_mask(self, column: str, low: float, high: float) -> pl.Expr:
         mask = (pl.col(column) < low) | (pl.col(column) > high)
         if self._df.schema[column].is_float():

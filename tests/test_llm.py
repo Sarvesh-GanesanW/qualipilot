@@ -327,6 +327,57 @@ def test_gz_gemini_keeps_api_key_out_of_url() -> None:
 
 
 @pytest.mark.parametrize(
+    ("connection_type", "getter_name"),
+    [
+        ("openai", "getOpenAIDetails"),
+        ("gemini", "getGeminiDetails"),
+    ],
+)
+def test_gz_requires_an_explicit_model(
+    connection_type: str,
+    getter_name: str,
+) -> None:
+    connections = MagicMock()
+    connections.conn = {"NoModel": {"type": connection_type}}
+    getattr(connections, getter_name).return_value = {"apiKey": "secret"}
+
+    with (
+        patch(
+            "qualipilot.llm.gz.import_module",
+            return_value=connections,
+        ),
+        pytest.raises(
+            ValueError,
+            match="GZ connection 'NoModel' requires model",
+        ),
+    ):
+        build_provider(LLMConfig(connection_name="NoModel"))
+
+
+def test_gz_huggingface_requires_an_explicit_endpoint() -> None:
+    connections = MagicMock()
+    connections.conn = {
+        "HuggingFace": {
+            "type": "huggingface",
+            "model": "org/model",
+        }
+    }
+    connections.getHuggingFaceDetails.return_value = {"apiKey": "secret"}
+
+    with (
+        patch(
+            "qualipilot.llm.gz.import_module",
+            return_value=connections,
+        ),
+        pytest.raises(
+            ValueError,
+            match="requires inferenceEndpointUrl or inferenceBaseUrl",
+        ),
+    ):
+        build_provider(LLMConfig(connection_name="HuggingFace"))
+
+
+@pytest.mark.parametrize(
     (
         "connection_type",
         "getter_name",

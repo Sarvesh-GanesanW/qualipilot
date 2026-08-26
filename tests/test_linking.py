@@ -23,6 +23,7 @@ from qualipilot.linking.blocking import (
     estimate_candidate_pair_upper_bound,
 )
 from qualipilot.linking.cluster import cluster_from_pairs
+from qualipilot.linking.em import estimate_parameters, score_pairs
 from qualipilot.linking.linker import LinkageResult
 
 
@@ -304,6 +305,103 @@ def test_non_informative_comparisons_do_not_change_scores(
     )
 
 
+@pytest.mark.parametrize("backend", ["polars", "duckdb"])
+def test_inverted_em_fit_fails_closed(backend: str) -> None:
+    if backend == "duckdb":
+        pytest.importorskip("duckdb")
+    frame = pl.DataFrame(
+        {
+            "id": [1, 2, 3, 4, 5, 6, 7, 8],
+            "block": [1, 1, 2, 2, 3, 3, 4, 4],
+            "name": ["a", "a", "b", "b", "c", "c", "d", "X"],
+            "email": ["a", "a", "b", "b", "c", "c", "d", "Y"],
+        }
+    )
+    config = LinkConfig(
+        backend=backend,  # type: ignore[arg-type]
+        unique_id_column="id",
+        blocking_rules=[["block"]],
+        comparisons=[
+            ExactMatch(column="name"),
+            ExactMatch(column="email"),
+        ],
+    )
+    linker = RecordLinker(frame, config)
+
+    result = linker.run()
+
+    fit = result.parameters["fit"]
+    assert fit["status"] == "rejected"
+    assert fit["inverted_comparisons"] == ["name", "email"]
+    assert result.pairs["match_probability"].to_list() == [0.0] * 4
+    assert result.match_pairs(0.9).is_empty()
+    assert len(set(result.clusters.values())) == frame.height
+    with pytest.raises(
+        ValueError,
+        match=r"rejected linkage fit.*agreement ordering inverted",
+    ):
+        linker.deduplicate(ConsolidationConfig())
+
+
+@pytest.mark.parametrize("backend", ["polars", "duckdb"])
+def test_degenerate_em_fit_fails_closed(backend: str) -> None:
+    if backend == "duckdb":
+        pytest.importorskip("duckdb")
+    frame = pl.DataFrame(
+        {
+            "id": [1, 2],
+            "name": ["same", "same"],
+            "email": ["same@example.com", "same@example.com"],
+        }
+    )
+    config = LinkConfig(
+        backend=backend,  # type: ignore[arg-type]
+        unique_id_column="id",
+        comparisons=[
+            ExactMatch(column="name"),
+            ExactMatch(column="email"),
+        ],
+    )
+
+    result = RecordLinker(frame, config).run()
+
+    fit = result.parameters["fit"]
+    assert fit["status"] == "rejected"
+    assert fit["usable_comparisons"] == []
+    assert "no comparison" in fit["reason"]
+    assert result.pairs["match_probability"].to_list() == [0.0]
+    assert len(set(result.clusters.values())) == frame.height
+
+
+def test_em_smooths_learned_and_scored_probabilities() -> None:
+    levels = np.array(
+        [
+            [1, 1],
+            [1, 2],
+            [2, 1],
+            [2, 2],
+        ],
+        dtype=np.uint8,
+    )
+    params = estimate_parameters(
+        levels,
+        np.array([3, 3], dtype=np.uint8),
+        prior=0.1,
+    )
+
+    assert 0.0 < params["lambda"] < 1.0
+    for table in (params["m"], params["u"]):
+        assert np.all(table[:, 1:] > 0.0)
+        assert np.all(table[:, 1:] < 1.0)
+    extreme_scores = score_pairs(
+        np.full((1, 20), 2, dtype=np.uint8),
+        np.tile(np.array([[0.0, 1e-12, 1.0]]), (20, 1)),
+        np.tile(np.array([[0.0, 1.0, 1e-12]]), (20, 1)),
+        0.5,
+    )
+    assert 0.0 < extreme_scores[0] < 1.0
+
+
 @pytest.mark.parametrize(
     ("comparison", "message"),
     [
@@ -427,6 +525,7 @@ def test_duckdb_blocking_column_need_not_be_compared() -> None:
     [
         ([0.0, 0.2], (0.5, 5.0), 3),
         ([2**53, 2**53 + 1], (0.0,), 1),
+        ([0, 2**53 + 1], (float(2**53),), 1),
         ([-(2**63), 2**63 - 1], (1.0,), 1),
     ],
 )
@@ -458,6 +557,142 @@ def test_match_pairs_rejects_invalid_thresholds(threshold: float) -> None:
 
     with pytest.raises(ValueError, match="between 0 and 1"):
         result.match_pairs(threshold)
+
+
+def test_labeled_pair_metrics_include_pairs_omitted_by_blocking() -> None:
+    result = LinkageResult(
+        pairs=pl.DataFrame(
+            {
+                "__id_l__": [1, 1, 2],
+                "__id_r__": [2, 3, 3],
+                "match_probability": [0.9, 0.8, 0.2],
+            }
+        )
+    )
+    labels = pl.DataFrame(
+        {
+            "__id_l__": [1, 1, 2, 1],
+            "__id_r__": [2, 3, 3, 4],
+            "is_match": [True, False, False, True],
+        }
+    )
+
+    assert result.evaluate_labeled_pairs(labels, threshold=0.5) == {
+        "threshold": 0.5,
+        "labeled_pairs": 4,
+        "tp": 1,
+        "fp": 1,
+        "tn": 1,
+        "fn": 1,
+        "precision": 0.5,
+        "recall": 0.5,
+        "f1": 0.5,
+    }
+
+
+@pytest.mark.parametrize("backend", ["polars", "duckdb"])
+def test_labeled_pair_metrics_work_for_both_backends(backend: str) -> None:
+    if backend == "duckdb":
+        pytest.importorskip("duckdb")
+    frame = pl.DataFrame(
+        {
+            "id": [1, 2, 3, 4],
+            "block": ["candidate", "candidate", "left", "right"],
+            "name": ["different-a", "different-b", "same", "same"],
+        }
+    )
+    result = RecordLinker(
+        frame,
+        LinkConfig(
+            backend=backend,  # type: ignore[arg-type]
+            unique_id_column="id",
+            comparisons=[ExactMatch(column="name")],
+            blocking_rules=[["block"]],
+        ),
+    ).run()
+    labels = pl.DataFrame(
+        {
+            "__id_l__": [1, 3],
+            "__id_r__": [2, 4],
+            "is_match": [False, True],
+        }
+    )
+
+    metrics = result.evaluate_labeled_pairs(labels, threshold=0.5)
+
+    assert metrics["tn"] == 1
+    assert metrics["fn"] == 1
+    assert metrics["recall"] == 0.0
+
+
+@pytest.mark.parametrize(
+    ("labels", "message"),
+    [
+        (
+            pl.DataFrame({"__id_l__": [1], "__id_r__": [2]}),
+            "missing required columns",
+        ),
+        (
+            pl.DataFrame(
+                {
+                    "__id_l__": [1],
+                    "__id_r__": [2],
+                    "is_match": [1],
+                }
+            ),
+            "Boolean dtype",
+        ),
+        (
+            pl.DataFrame(
+                {
+                    "__id_l__": [1],
+                    "__id_r__": [2],
+                    "is_match": pl.Series([None], dtype=pl.Boolean),
+                }
+            ),
+            "must not contain nulls",
+        ),
+        (
+            pl.DataFrame(
+                {
+                    "__id_l__": [1, 1],
+                    "__id_r__": [2, 2],
+                    "is_match": [True, False],
+                }
+            ),
+            "must be unique",
+        ),
+    ],
+)
+def test_labeled_pair_metrics_validate_labels(
+    labels: pl.DataFrame,
+    message: str,
+) -> None:
+    result = LinkageResult(
+        pairs=pl.DataFrame(
+            {
+                "__id_l__": [1],
+                "__id_r__": [2],
+                "match_probability": [0.9],
+            }
+        )
+    )
+
+    with pytest.raises(ValueError, match=message):
+        result.evaluate_labeled_pairs(labels, threshold=0.5)
+
+
+@pytest.mark.parametrize(
+    "threshold",
+    [float("nan"), float("inf"), -0.1, 1.1],
+)
+def test_labeled_pair_metrics_reject_invalid_thresholds(
+    threshold: float,
+) -> None:
+    result = LinkageResult(pairs=pl.DataFrame({"match_probability": [0.9]}))
+
+    with pytest.raises(ValueError, match="between 0 and 1"):
+        result.evaluate_labeled_pairs(pl.DataFrame(), threshold=threshold)
 
 
 def test_summary_reports_the_effective_match_threshold() -> None:
@@ -870,7 +1105,7 @@ def test_nanosecond_datetime_ids_keep_datetime_keys() -> None:
 
 
 @pytest.mark.parametrize("backend", ["polars", "duckdb"])
-def test_linker_clusters_date_ids(backend: str) -> None:
+def test_linker_preserves_date_ids_for_rejected_fit(backend: str) -> None:
     if backend == "duckdb":
         pytest.importorskip("duckdb")
     frame = pl.DataFrame(
@@ -897,7 +1132,9 @@ def test_linker_clusters_date_ids(backend: str) -> None:
 
     result = RecordLinker(frame, config).run()
 
-    assert len(set(result.clusters.values())) == 1
+    assert set(result.clusters) == set(frame["id"].to_list())
+    assert len(set(result.clusters.values())) == 2
+    assert result.parameters["fit"]["status"] == "rejected"
 
 
 @pytest.mark.parametrize("dtype_name", ["Int128", "UInt128"])

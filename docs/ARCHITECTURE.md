@@ -1,8 +1,10 @@
 # Architecture
 
 Qualipilot separates orchestration, dataframe execution, checks, optional
-LLM narration, and rendering. The same `QualityReport` model is returned by
-the Python API, rendered by the CLI, and uploaded by the Lambda handler.
+LLM narration, record linkage, and NER. The same `QualityReport` model is
+returned by the quality Python API, rendered by the CLI, and uploaded by the
+Lambda handler. Linkage and NER are explicit workflows with their own result
+contracts; neither is silently run as part of ordinary quality checks.
 
 ```text
 CLI / Python / Lambda
@@ -28,10 +30,16 @@ checks  engines   LLM provider (optional)
 | `qualipilot.llm` | send a compact summary to an explicitly configured provider |
 | `qualipilot.reporting` | render HTML and Markdown; JSON comes from Pydantic |
 | `qualipilot.linking` | normalization, matching, clustering, and record consolidation |
+| `qualipilot.ner` | optional spaCy model loading and ordered entity-span extraction |
 | `qualipilot.lambda_handler` | validate S3 events, bound downloads, and upload reports |
 
 Optional dependencies are imported at their boundary so the core package
 does not require every dataframe engine or cloud SDK.
+
+NER models are deployment artifacts, not hidden runtime downloads. The caller
+selects and pins a spaCy pipeline; Qualipilot records its metadata and returns
+the pipeline's text, label, knowledge-base ID, and character offsets without
+claiming model calibration.
 
 ## Check flow
 

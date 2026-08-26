@@ -38,7 +38,12 @@ class DatasetContractCheck(Check):
                 "actual": dtypes[column],
             }
             for column, expected in ctx.config.expected_dtypes.items()
-            if column in dtypes and dtypes[column] != expected
+            if column in dtypes
+            and not _dtype_matches(
+                expected,
+                dtypes[column],
+                ctx.engine.dtype_family(column),
+            )
         ]
         is_too_small = row_count < ctx.config.min_rows
         severity: Severity = (
@@ -62,3 +67,35 @@ class DataTypesCheck(Check):
             "per_column": dtypes,
             "rollup": dict(rollup),
         }
+
+
+_PORTABLE_DTYPE_ALIASES = {
+    "bool": "boolean",
+    "boolean": "boolean",
+    "bytes": "binary",
+    "binary": "binary",
+    "category": "categorical",
+    "categorical": "categorical",
+    "date": "date",
+    "datetime": "datetime",
+    "decimal": "decimal",
+    "duration": "duration",
+    "float": "float",
+    "int": "integer",
+    "integer": "integer",
+    "number": "numeric",
+    "numeric": "numeric",
+    "str": "string",
+    "string": "string",
+    "time": "time",
+    "timestamp": "datetime",
+}
+
+
+def _dtype_matches(expected: str, actual: str, family: str) -> bool:
+    portable = _PORTABLE_DTYPE_ALIASES.get(expected.casefold())
+    if portable == "numeric":
+        return family in {"integer", "float", "decimal"}
+    if portable is not None:
+        return family == portable
+    return actual.casefold() == expected.casefold()

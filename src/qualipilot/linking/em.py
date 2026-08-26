@@ -24,11 +24,29 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 _TINY = 1e-12
+_PSEUDOCOUNT = 0.5
+_ORDER_TOLERANCE = 1e-6
+_NEUTRAL_WEIGHT_SPAN = 1e-6
+_MIN_PROBABILITY = np.nextafter(np.float32(0), np.float32(1))
+_MAX_PROBABILITY = np.nextafter(np.float32(1), np.float32(0))
+
+
+class _EMFitState(TypedDict):
+    converged: bool
+    iterations: int
+    max_parameter_delta: float
+    informative: list[bool]
+    smoothing_pseudocount: float
 
 
 EMParams = TypedDict(
     "EMParams",
-    {"m": np.ndarray, "u": np.ndarray, "lambda": float},
+    {
+        "m": np.ndarray,
+        "u": np.ndarray,
+        "lambda": float,
+        "fit_state": _EMFitState,
+    },
 )
 
 
@@ -40,7 +58,7 @@ def estimate_parameters(
     max_iter: int = 25,
     tol: float = 1e-4,
 ) -> EMParams:
-    """Return learned ``m``, ``u`` and ``lambda`` via EM.
+    """Return smoothed ``m``, ``u`` and ``lambda`` via EM.
 
     Args:
         levels: uint8 array of shape ``(N, C)``.
@@ -51,7 +69,8 @@ def estimate_parameters(
         tol: stop once the max-abs change in m/u drops below this.
 
     Returns:
-        Dict with keys ``m``, ``u`` (shape ``(C, L)``) and ``lambda``.
+        Dict with ``m``, ``u`` (shape ``(C, L)``), ``lambda``, and the
+        convergence state used by the linkage safety check.
     """
     n_pairs = levels.shape[0]
     if n_pairs == 0:
@@ -76,6 +95,8 @@ def estimate_parameters(
     level_mask = _build_level_mask(n_levels_per_comp, max_levels).astype(
         np.float32
     )
+    smoothing_mask = level_mask.copy()
+    smoothing_mask[:, 0] = 0.0
 
     prev_m = m.copy()
     prev_u = u.copy()
@@ -85,40 +106,23 @@ def estimate_parameters(
     # keep the transpose once outside the loop and gather from log
     # tables directly to skip the big np.log on the per-pair matrix.
     levels_t = levels.T.astype(np.int64)
-    observed = levels != 0
+    observed = (levels != 0) & informative[None, :]
 
+    converged = False
+    iterations = 0
+    delta = float("inf")
     for step in range(max_iter):
-        log_m = np.log(m + _TINY, dtype=np.float32)
-        log_u = np.log(u + _TINY, dtype=np.float32)
-
-        # gather in log-space: N*C table lookups, no per-pair log calls
-        log_m_pair = np.where(
+        responsibilities = _expectation(
+            levels_t,
             observed,
-            np.take_along_axis(log_m, levels_t, axis=1).T,
-            0.0,
+            m,
+            u,
+            lam,
         )
-        log_u_pair = np.where(
-            observed,
-            np.take_along_axis(log_u, levels_t, axis=1).T,
-            0.0,
+        lam = float(
+            (responsibilities.sum(dtype=np.float64) + _PSEUDOCOUNT)
+            / (n_pairs + 2 * _PSEUDOCOUNT)
         )
-        log_m_product = log_m_pair.sum(axis=1)
-        log_u_product = log_u_pair.sum(axis=1)
-
-        log_lam = float(np.log(lam + _TINY))
-        log_1mlam = float(np.log(1.0 - lam + _TINY))
-
-        num = log_lam + log_m_product
-        den_other = log_1mlam + log_u_product
-        # log-space softmax for numerical stability
-        max_ab = np.maximum(num, den_other)
-        log_denom = max_ab + np.log(
-            np.exp(num - max_ab, dtype=np.float32)
-            + np.exp(den_other - max_ab, dtype=np.float32)
-        )
-        responsibilities = np.exp(num - log_denom, dtype=np.float32)
-
-        lam = float(responsibilities.mean())
         not_r = 1.0 - responsibilities
 
         # vector m-step: bincount per comparison is still the cleanest
@@ -135,6 +139,8 @@ def estimate_parameters(
                 weights=not_r[observed_rows],
                 minlength=max_levels,
             )
+            counts_m += _PSEUDOCOUNT * smoothing_mask[c]
+            counts_u += _PSEUDOCOUNT * smoothing_mask[c]
             m[c, :] = counts_m / (counts_m.sum() + _TINY)
             u[c, :] = counts_u / (counts_u.sum() + _TINY)
 
@@ -149,9 +155,11 @@ def estimate_parameters(
         prev_m = m.copy()
         prev_u = u.copy()
         prev_lam = lam
+        iterations = step + 1
 
         logger.debug("em step %d  lambda=%.6f  delta=%.6e", step, lam, delta)
         if delta < tol:
+            converged = True
             logger.info(
                 "em converged in %d iterations (lambda=%.6f)",
                 step + 1,
@@ -161,7 +169,125 @@ def estimate_parameters(
     else:
         logger.info("em stopped at max_iter=%d (lambda=%.6f)", max_iter, lam)
 
-    return cast(EMParams, {"m": m, "u": u, "lambda": lam})
+    return cast(
+        EMParams,
+        {
+            "m": m,
+            "u": u,
+            "lambda": lam,
+            "fit_state": _EMFitState(
+                converged=converged,
+                iterations=iterations,
+                max_parameter_delta=delta,
+                informative=informative.tolist(),
+                smoothing_pseudocount=_PSEUDOCOUNT,
+            ),
+        },
+    )
+
+
+def _expectation(
+    levels_t: np.ndarray,
+    observed: np.ndarray,
+    m: np.ndarray,
+    u: np.ndarray,
+    lam: float,
+) -> np.ndarray:
+    """Return per-pair match responsibilities in log space."""
+    log_m = np.log(m + _TINY, dtype=np.float32)
+    log_u = np.log(u + _TINY, dtype=np.float32)
+    log_m_product = np.where(
+        observed,
+        np.take_along_axis(log_m, levels_t, axis=1).T,
+        0.0,
+    ).sum(axis=1)
+    log_u_product = np.where(
+        observed,
+        np.take_along_axis(log_u, levels_t, axis=1).T,
+        0.0,
+    ).sum(axis=1)
+    num = float(np.log(lam + _TINY)) + log_m_product
+    den_other = float(np.log(1.0 - lam + _TINY)) + log_u_product
+    max_ab = np.maximum(num, den_other)
+    log_denom = max_ab + np.log(
+        np.exp(num - max_ab, dtype=np.float32)
+        + np.exp(den_other - max_ab, dtype=np.float32)
+    )
+    return cast(
+        np.ndarray,
+        np.exp(num - log_denom, dtype=np.float32),
+    )
+
+
+def build_fit_diagnostics(
+    params: EMParams,
+    n_levels_per_comp: np.ndarray,
+    comparison_names: list[str],
+    *,
+    sampled_pair_count: int,
+    candidate_pair_count: int,
+) -> dict[str, object]:
+    """Describe whether learned parameters are safe enough to score."""
+    if len(comparison_names) != len(n_levels_per_comp):
+        raise ValueError("comparison names do not match learned parameters")
+
+    m = params["m"]
+    u = params["u"]
+    fit_state = params["fit_state"]
+    informative_names: list[str] = []
+    neutral_names: list[str] = []
+    usable_names: list[str] = []
+    inverted_names: list[str] = []
+
+    for index, name in enumerate(comparison_names):
+        if not fit_state["informative"][index]:
+            neutral_names.append(name)
+            continue
+        informative_names.append(name)
+        level_count = int(n_levels_per_comp[index])
+        weights = np.log(
+            (m[index, 1:level_count] + _TINY)
+            / (u[index, 1:level_count] + _TINY)
+        )
+        if float(np.ptp(weights)) <= _NEUTRAL_WEIGHT_SPAN:
+            neutral_names.append(name)
+            continue
+        usable_names.append(name)
+        if np.any(np.diff(weights) < -_ORDER_TOLERANCE):
+            inverted_names.append(name)
+
+    warnings: list[str] = []
+    if not fit_state["converged"]:
+        warnings.append(
+            f"EM did not converge within {fit_state['iterations']} iterations"
+        )
+    reasons: list[str] = []
+    if inverted_names:
+        reasons.append(
+            "agreement ordering inverted for " + ", ".join(inverted_names)
+        )
+    if not usable_names:
+        reasons.append(
+            "no comparison has both varied observed levels and a learned "
+            "non-neutral weight"
+        )
+
+    status = "rejected" if reasons else "warning" if warnings else "ok"
+    return {
+        "status": status,
+        "reason": "; ".join(reasons) if reasons else None,
+        "warnings": warnings,
+        "converged": fit_state["converged"],
+        "iterations": fit_state["iterations"],
+        "max_parameter_delta": fit_state["max_parameter_delta"],
+        "candidate_pair_count": candidate_pair_count,
+        "sampled_pair_count": sampled_pair_count,
+        "smoothing_pseudocount": fit_state["smoothing_pseudocount"],
+        "informative_comparisons": informative_names,
+        "usable_comparisons": usable_names,
+        "neutral_comparisons": neutral_names,
+        "inverted_comparisons": inverted_names,
+    }
 
 
 def score_pairs(
@@ -175,7 +301,10 @@ def score_pairs(
     log_m = np.log(m + _TINY, dtype=np.float32)
     log_u = np.log(u + _TINY, dtype=np.float32)
 
-    observed = levels != 0
+    # Exactly neutral comparisons carry no evidence. Excluding them also
+    # avoids a harmless shared log term changing scores through rounding.
+    usable = np.any(m != u, axis=1)
+    observed = (levels != 0) & usable[None, :]
     log_m_product = np.where(
         observed,
         np.take_along_axis(log_m, levels_t, axis=1).T,
@@ -197,7 +326,15 @@ def score_pairs(
         np.exp(num - max_ab, dtype=np.float32)
         + np.exp(den_other - max_ab, dtype=np.float32)
     )
-    return cast(np.ndarray, np.exp(num - log_denom, dtype=np.float32))
+    probabilities = np.exp(num - log_denom, dtype=np.float32)
+    return cast(
+        np.ndarray,
+        np.clip(
+            probabilities,
+            _MIN_PROBABILITY,
+            _MAX_PROBABILITY,
+        ),
+    )
 
 
 def _initialise(
@@ -223,8 +360,7 @@ def _initialise(
         )
         counts[0] = 0
         if not informative[c]:
-            if counts.sum() == 0:
-                counts[1 : top + 1] = 1
+            counts[1 : top + 1] += _PSEUDOCOUNT
             m[c, :] = counts
             u[c, :] = counts
             continue
@@ -232,6 +368,7 @@ def _initialise(
         # m seed: 0.7 on top level, linearly decaying for lower ones
         m[c, top] = 0.7
         m[c, 1:top] = 0.25 / max(top - 1, 1)
+        counts[1 : top + 1] += _PSEUDOCOUNT
         u[c, :] = counts
 
     mask = _build_level_mask(n_levels_per_comp, max_levels)

@@ -11,6 +11,7 @@ enough data to estimate each level's m/u probability reliably.
 from __future__ import annotations
 
 import math
+from decimal import Decimal
 from typing import Literal
 
 import numpy as np
@@ -111,7 +112,38 @@ class NumericDiff(_BaseComparison):
                 pl.col(left_name).cast(pl.Decimal(38, 0))
                 - pl.col(right_name).cast(pl.Decimal(38, 0))
             ).abs()
-        elif left.dtype.is_decimal() and right.dtype.is_decimal():
+            level_expr = pl.lit(1, dtype=pl.UInt8)
+            for rank, threshold in enumerate(
+                sorted(self.thresholds, reverse=True),
+                start=2,
+            ):
+                # NumericDiff rejects 128-bit inputs, so every possible
+                # cross-signed integer difference is below 2**65.
+                within_threshold = (
+                    pl.lit(True)
+                    if threshold >= 2**65
+                    else diff_expr <= pl.lit(Decimal(str(threshold)))
+                )
+                level_expr = (
+                    pl.when(within_threshold)
+                    .then(pl.lit(rank, dtype=pl.UInt8))
+                    .otherwise(level_expr)
+                )
+            return (
+                pairs.select(
+                    pl.when(
+                        pl.col(left_name).is_null()
+                        | pl.col(right_name).is_null()
+                    )
+                    .then(pl.lit(0, dtype=pl.UInt8))
+                    .otherwise(level_expr)
+                    .alias("__level__")
+                )
+                .to_series()
+                .to_numpy()
+                .astype(np.uint8)
+            )
+        if left.dtype.is_decimal() and right.dtype.is_decimal():
             left_expr = pl.col(left_name)
             right_expr = pl.col(right_name)
             same_sign = ((left_expr >= 0) & (right_expr >= 0)) | (

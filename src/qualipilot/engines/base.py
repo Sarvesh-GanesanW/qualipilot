@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
+from datetime import UTC, date, datetime, time
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import pyarrow as pa
@@ -28,6 +30,10 @@ class Engine(ABC):
     @abstractmethod
     def dtypes(self) -> dict[str, str]:
         """Return a mapping of column name to dtype string."""
+
+    def dtype_family(self, column: str) -> str:
+        """Return a portable logical dtype family for ``column``."""
+        return dtype_family_from_name(self.dtypes()[column])
 
     @abstractmethod
     def numeric_columns(self) -> list[str]:
@@ -77,6 +83,11 @@ class Engine(ABC):
         Returns:
             ``{column: {q: value}}``.
         """
+
+    @property
+    def quantile_provenance(self) -> dict[str, str | float]:
+        """Describe the quantiles exposed by this engine."""
+        return {"method": "exact"}
 
     # ---- filters -------------------------------------------------------
 
@@ -129,6 +140,17 @@ class Engine(ABC):
     @abstractmethod
     def max_datetime(self, column: str) -> Any:
         """Return the max value of a datetime column, or None if empty."""
+
+    def max_datetime_instant(
+        self,
+        column: str,
+        naive_timezone: str = "UTC",
+    ) -> datetime | None:
+        """Return the latest value as a timezone-aware UTC instant."""
+        value = self.max_datetime(column)
+        return (
+            None if value is None else as_utc_datetime(value, naive_timezone)
+        )
 
 
 def reject_nested_columns(columns: list[str]) -> None:
@@ -249,3 +271,91 @@ def is_date_arrow_dtype(dtype: Any) -> bool:
     return isinstance(arrow_dtype, pa.DataType) and pa.types.is_date(
         arrow_dtype
     )
+
+
+def as_utc_datetime(value: Any, naive_timezone: str = "UTC") -> datetime:
+    """Parse one ISO-like temporal value into a comparable UTC instant."""
+    if hasattr(value, "to_pydatetime"):
+        value = value.to_pydatetime()
+    if isinstance(value, datetime):
+        parsed = value
+    elif isinstance(value, date):
+        parsed = datetime.combine(value, time.min)
+    else:
+        parsed = datetime.fromisoformat(str(value).strip())
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=ZoneInfo(naive_timezone))
+    return parsed.astimezone(UTC)
+
+
+def dtype_family_from_name(dtype: str) -> str:
+    """Map native engine dtype spellings to portable logical families."""
+    value = dtype.strip().casefold()
+    if (
+        value.startswith("uint")
+        or (value.startswith("int") and value[3:4].isdigit())
+        or value
+        in {
+            "byte",
+            "int",
+            "short",
+            "long",
+            "tinyint",
+            "smallint",
+            "integer",
+            "bigint",
+            "hugeint",
+            "utinyint",
+            "usmallint",
+            "uinteger",
+            "ubigint",
+        }
+    ):
+        return "integer"
+    if value.startswith(("float", "double", "real")):
+        return "float"
+    if value.startswith("decimal"):
+        return "decimal"
+    if value.startswith(("bool", "boolean")):
+        return "boolean"
+    if value.startswith(("datetime", "timestamp")):
+        return "datetime"
+    if value.startswith("date"):
+        return "date"
+    if value.startswith(("duration", "timedelta")):
+        return "duration"
+    if value.startswith("time"):
+        return "time"
+    if value.startswith(("binary", "bytes")) or value == "blob":
+        return "binary"
+    if value.startswith(("str", "string", "varchar", "char")) or value in {
+        "text",
+        "utf8",
+    }:
+        return "string"
+    if value.startswith(("categorical", "category", "enum")):
+        return "categorical"
+    return value
+
+
+def object_dtype_family(families: set[str]) -> str:
+    """Return the portable family represented by inferred object values."""
+    if families == {"integer"}:
+        return "integer"
+    if families in ({"floating"}, {"integer", "floating"}):
+        return "float"
+    if families == {"decimal"}:
+        return "decimal"
+    if families == {"boolean"}:
+        return "boolean"
+    if families <= {"date", "datetime", "datetime64"} and families:
+        return "datetime" if families != {"date"} else "date"
+    if families <= {"timedelta", "timedelta64"} and families:
+        return "duration"
+    if families == {"time"}:
+        return "time"
+    if families == {"bytes"}:
+        return "binary"
+    if families == {"string"}:
+        return "string"
+    return "object"

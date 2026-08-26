@@ -2,7 +2,7 @@
 #
 # usage:
 #     .\install.ps1
-#     .\install.ps1 -Extras bedrock,linking,duckdb
+#     .\install.ps1 -Extras bedrock,gz,ner,linking,duckdb
 #     .\install.ps1 -Extras all
 #     .\install.ps1 -Dev
 [CmdletBinding()]
@@ -10,6 +10,8 @@ param(
     [ValidateSet(
         "bedrock",
         "dask",
+        "gz",
+        "ner",
         "ollama",
         "openai",
         "linking",
@@ -66,13 +68,19 @@ foreach ($extra in $Extras) {
     $selectedExtras.Add($extra)
 }
 
-if (-not (Get-Command "uv" -ErrorAction SilentlyContinue)) {
-    Write-Host "uv not found; installing uv 0.11.21"
+$uvVersion = "0.11.21"
+$installedUvVersion = if (Get-Command "uv" -ErrorAction SilentlyContinue) {
+    & uv --version
+} else {
+    ""
+}
+if ($installedUvVersion -notlike "uv $uvVersion*") {
+    Write-Host "installing uv $uvVersion"
     Invoke-Checked -Command "python" -Arguments @(
         "-m",
         "pip",
         "install",
-        "uv==0.11.21"
+        "uv==$uvVersion"
     )
 }
 

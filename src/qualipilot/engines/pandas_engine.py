@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from decimal import Decimal
 from pathlib import Path
 from typing import Any, cast
 
@@ -14,7 +13,8 @@ from qualipilot.engines._file_formats import (
 )
 from qualipilot.engines.base import (
     Engine,
-    is_decimal_arrow_dtype,
+    as_utc_datetime,
+    object_dtype_family,
     validate_pandas_columns,
 )
 
@@ -51,29 +51,25 @@ class PandasEngine(Engine):
     def dtypes(self) -> dict[str, str]:
         return {c: str(dt) for c, dt in self._df.dtypes.items()}
 
+    def dtype_family(self, column: str) -> str:
+        series = self._df[column]
+        if pd.api.types.is_object_dtype(series.dtype):
+            return object_dtype_family(_object_families(series))
+        return super().dtype_family(column)
+
     def numeric_columns(self) -> list[str]:
-        columns = [
-            column
-            for column in self._df.select_dtypes(include="number").columns
-            if not pd.api.types.is_timedelta64_dtype(self._df[column].dtype)
-        ]
-        columns.extend(
+        return [
             column
             for column in self._df.columns
-            if column not in columns and _is_decimal_series(self._df[column])
-        )
-        return columns
+            if self.dtype_family(column) in {"integer", "float", "decimal"}
+        ]
 
     def datetime_columns(self) -> list[str]:
-        columns = list(
-            self._df.select_dtypes(include=["datetime", "datetimetz"]).columns
-        )
-        columns.extend(
+        return [
             column
             for column in self._df.columns
-            if column not in columns and _is_date_series(self._df[column])
-        )
-        return columns
+            if self.dtype_family(column) in {"date", "datetime"}
+        ]
 
     def null_counts(self) -> dict[str, int]:
         return {c: int(v) for c, v in self._df.isna().sum().items()}
@@ -107,11 +103,9 @@ class PandasEngine(Engine):
         # by q, which is exactly what we need
         frame = self._df[columns].copy()
         for column in columns:
-            if _is_decimal_series(frame[column]):
+            if not pd.api.types.is_numeric_dtype(frame[column].dtype):
                 frame[column] = frame[column].map(
-                    lambda value: (
-                        float(value) if isinstance(value, Decimal) else value
-                    )
+                    lambda value: float(value) if pd.notna(value) else value
                 )
         q_df = frame.quantile(list(qs), interpolation="linear")
         return {
@@ -170,6 +164,24 @@ class PandasEngine(Engine):
         # pandas returns NaT for empty series, normalise to None
         return None if pd.isna(val) else val
 
+    def max_datetime_instant(
+        self,
+        column: str,
+        naive_timezone: str = "UTC",
+    ) -> Any:
+        series = self._df[column]
+        if not (
+            pd.api.types.is_object_dtype(series.dtype)
+            or isinstance(series.dtype, pd.StringDtype)
+        ):
+            return super().max_datetime_instant(column, naive_timezone)
+        values = (
+            as_utc_datetime(value, naive_timezone)
+            for value in series
+            if not pd.isna(value)
+        )
+        return max(values, default=None)
+
     def _duplicate_mask(self, subset: list[str] | None) -> pd.Series:
         columns = subset or self.columns()
         keys = self._df[columns].copy()
@@ -214,22 +226,10 @@ def _read_path(path: Path) -> pd.DataFrame:
     raise ValueError(f"unsupported file type: {suffix}")
 
 
-def _is_decimal_series(series: pd.Series) -> bool:
-    if is_decimal_arrow_dtype(series.dtype):
-        return True
-    if not pd.api.types.is_object_dtype(series.dtype):
-        return False
-    values = series.dropna()
-    return not values.empty and bool(
-        values.map(lambda value: isinstance(value, Decimal)).all()
-    )
-
-
-def _is_date_series(series: pd.Series) -> bool:
-    return pd.api.types.is_object_dtype(
-        series.dtype
-    ) and pd.api.types.infer_dtype(series, skipna=True) in {
-        "date",
-        "datetime",
-        "datetime64",
-    }
+def _object_families(series: pd.Series) -> set[str]:
+    family = pd.api.types.infer_dtype(series, skipna=True)
+    if family == "empty":
+        return set()
+    if family == "mixed-integer-float":
+        return {"integer", "floating"}
+    return {family}

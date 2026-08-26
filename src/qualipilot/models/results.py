@@ -98,6 +98,11 @@ class QualityReport(_ResultModel):
         """Render the report as a JSON string."""
         return self.model_dump_json(indent=indent)
 
+    @classmethod
+    def from_json(cls, payload: str | bytes | bytearray) -> QualityReport:
+        """Load a compatible report while ignoring newer optional fields."""
+        return cls.model_validate_json(payload, extra="ignore")
+
     def failed_checks(self) -> list[CheckResult]:
         """Checks that hit the ``error`` severity."""
         return [r for r in self.results if r.severity == "error"]

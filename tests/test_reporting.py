@@ -10,6 +10,7 @@ import json
 
 import pandas as pd
 import pytest
+from pydantic import ValidationError
 
 from qualipilot import DataQualityChecker, QualipilotConfig
 from qualipilot.models.config import CheckConfig, ColumnRange
@@ -270,6 +271,99 @@ def test_html_dataset_contract_shows_dtype_mismatches() -> None:
     assert "<code>id</code>" in rendered
     assert "<code>Int64</code>" in rendered
     assert "<code>String</code>" in rendered
+
+
+def test_markdown_retains_known_and_extension_payload_details() -> None:
+    report = QualityReport(
+        dataset=DatasetStats(
+            row_count=1,
+            column_count=1,
+            columns=["value"],
+            dtypes={"value": "str"},
+            engine="test",
+        ),
+        results=[
+            CheckResult(
+                name="cardinality",
+                severity="ok",
+                duration_seconds=0,
+                payload={
+                    "per_column": [
+                        {
+                            "column": "value",
+                            "distinct_count": 1,
+                            "top_values": [["requested-value", 1]],
+                        }
+                    ]
+                },
+            ),
+            CheckResult(
+                name="extension_check",
+                severity="ok",
+                duration_seconds=0,
+                payload={"extension_detail": "preserved"},
+            ),
+        ],
+    )
+
+    rendered = render_markdown(report)
+
+    assert rendered.count("Raw payload:") == 2
+    assert "requested-value" in rendered
+    assert "extension_detail" in rendered
+    assert "preserved" in rendered
+
+
+def test_report_deserialization_ignores_compatible_unknown_fields() -> None:
+    report = json.loads(
+        _single_result_report(
+            CheckResult(
+                name="custom",
+                severity="ok",
+                duration_seconds=0,
+            )
+        ).to_json()
+    )
+    report["future_report_field"] = "ignored"
+    report["dataset"]["future_dataset_field"] = "ignored"
+    report["results"][0]["future_result_field"] = "ignored"
+
+    parsed = QualityReport.from_json(json.dumps(report))
+
+    assert parsed.schema_version == "1.0"
+    assert not hasattr(parsed, "future_report_field")
+    assert not hasattr(parsed.dataset, "future_dataset_field")
+    assert not hasattr(parsed.results[0], "future_result_field")
+
+
+def test_report_deserialization_rejects_an_unknown_schema_version() -> None:
+    report = json.loads(
+        _single_result_report(
+            CheckResult(
+                name="custom",
+                severity="ok",
+                duration_seconds=0,
+            )
+        ).to_json()
+    )
+    report["schema_version"] = "2.0"
+
+    with pytest.raises(ValidationError, match="schema_version"):
+        QualityReport.from_json(json.dumps(report))
+
+
+def test_report_construction_still_rejects_unknown_fields() -> None:
+    report = _single_result_report(
+        CheckResult(
+            name="custom",
+            severity="ok",
+            duration_seconds=0,
+        )
+    ).model_dump()
+    report["future_report_field"] = "not accepted at strict boundary"
+
+    with pytest.raises(ValidationError, match="future_report_field"):
+        QualityReport.model_validate(report)
 
 
 def _single_result_report(result: CheckResult) -> QualityReport:
