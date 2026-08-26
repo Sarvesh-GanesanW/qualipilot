@@ -86,7 +86,7 @@ jobs:
           terraform_version: "1.15.8"
       - run: uv sync --locked
       - run: >-
-          uv export --locked --no-dev --no-emit-project
+          uv export --locked --no-emit-project
           --extra bedrock --extra dask --extra gz --extra linking --extra duckdb
           --extra ner
           --extra ollama --extra openai --extra spark
