@@ -101,7 +101,33 @@ class QualityReport(_ResultModel):
     @classmethod
     def from_json(cls, payload: str | bytes | bytearray) -> QualityReport:
         """Load a compatible report while ignoring newer optional fields."""
-        return cls.model_validate_json(payload, extra="ignore")
+        data = json.loads(payload)
+        if isinstance(data, dict):
+            data = {
+                key: value
+                for key, value in data.items()
+                if key in cls.model_fields
+            }
+            dataset = data.get("dataset")
+            if isinstance(dataset, dict):
+                data["dataset"] = {
+                    key: value
+                    for key, value in dataset.items()
+                    if key in DatasetStats.model_fields
+                }
+            results = data.get("results")
+            if isinstance(results, list):
+                data["results"] = [
+                    {
+                        key: value
+                        for key, value in result.items()
+                        if key in CheckResult.model_fields
+                    }
+                    if isinstance(result, dict)
+                    else result
+                    for result in results
+                ]
+        return cls.model_validate(data)
 
     def failed_checks(self) -> list[CheckResult]:
         """Checks that hit the ``error`` severity."""
