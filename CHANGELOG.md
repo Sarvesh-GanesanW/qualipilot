@@ -4,6 +4,8 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [3.4.0] - 2026-09-02
+
 ### Added
 
 - Standards/assurance mapping, a reproducible 100-million-row Spark benchmark,

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "qualipilot"
-version = "3.3.0"
+version = "3.4.0"
 description = "Data quality, record linkage, and named-entity extraction."
 readme = "README.md"
 license = "MIT"
