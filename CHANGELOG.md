@@ -18,6 +18,8 @@ This project follows [Semantic Versioning](https://semver.org/).
   inference endpoints remain supported.
 - OpenAI project, Anthropic workspace, Anthropic sampling, and AWS Bedrock
   assume-role settings now follow the managed connection contract.
+- Reports record the provider and model resolved from managed GroundZero
+  connections, and range checks batch multi-column violation counts.
 
 ### Fixed
 

@@ -208,6 +208,8 @@ def test_gz_openai_uses_typed_getter_and_raw_model_fallback() -> None:
     assert request.kwargs["json"]["model"] == "gpt-from-connection"
     assert request.kwargs["headers"]["Authorization"] == f"Bearer {secret}"
     assert request.kwargs["headers"]["OpenAI-Project"] == "project-test"
+    assert provider.resolved_provider == "openai"
+    assert provider.resolved_model == "gpt-from-connection"
     assert secret not in config.model_dump_json()
     assert secret not in repr(provider)
     assert secret not in repr(provider._delegate._cfg)

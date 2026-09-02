@@ -111,6 +111,17 @@ class GZConnectionProvider(LLMProvider):
             details,
             raw_connection,
         )
+        self.resolved_provider = connection_type
+        self.resolved_model = (
+            _public_text(
+                details.get("deploymentName")
+                or raw_connection.get("deploymentName"),
+                "deploymentName",
+                connection_name,
+            )
+            if connection_type == "azureopenai"
+            else _model(details, raw_connection, connection_name)
+        )
 
     def generate(self, *, system: str, user: str) -> str:
         return self._delegate.generate(system=system, user=user)

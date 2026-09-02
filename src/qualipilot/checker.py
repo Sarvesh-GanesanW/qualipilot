@@ -234,6 +234,12 @@ class DataQualityChecker:
             from qualipilot.llm import build_provider
 
             provider = build_provider(self.config.llm)
+            report.llm_provider = getattr(
+                provider, "resolved_provider", report.llm_provider
+            )
+            report.llm_model = getattr(
+                provider, "resolved_model", report.llm_model
+            )
             prompt = _build_llm_prompt(report)
             text = provider.generate(
                 system=self.config.llm.system_prompt, user=prompt

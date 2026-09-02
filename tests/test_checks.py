@@ -186,6 +186,35 @@ def test_ranges_errors_on_violation(
     assert amount["violation_count"] >= 1
 
 
+def test_ranges_count_configured_columns_in_one_batch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = _ctx(pd.DataFrame({"a": [0, 2], "b": [0, 20]}))
+    original = context.engine.counts_outside
+    calls: list[dict[str, tuple[float, float]]] = []
+
+    def count_once(
+        ranges: dict[str, tuple[float, float]],
+    ) -> dict[str, int]:
+        calls.append(ranges)
+        return original(ranges)
+
+    monkeypatch.setattr(context.engine, "counts_outside", count_once)
+    config = CheckConfig(
+        column_ranges={
+            "a": ColumnRange(min=0, max=1),
+            "b": ColumnRange(min=0, max=10),
+        }
+    )
+
+    result = RangesCheck().run(
+        CheckContext(engine=context.engine, config=config)
+    )
+
+    assert result.severity == "error"
+    assert calls == [{"a": (0.0, 1.0), "b": (0.0, 10.0)}]
+
+
 def test_ranges_ok_when_not_configured(
     dirty_pandas: pd.DataFrame,
 ) -> None:

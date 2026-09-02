@@ -25,6 +25,12 @@ class RangesCheck(Check):
         )
         existing = set(columns)
         numeric = set(ctx.engine.numeric_columns())
+        applicable_ranges = {
+            col: (spec.min, spec.max)
+            for col, spec in ranges.items()
+            if col in existing and col in numeric
+        }
+        counts = ctx.engine.counts_outside(applicable_ranges)
         report: list[dict[str, Any]] = []
         any_violations = False
         any_misapplied = False
@@ -64,7 +70,7 @@ class RangesCheck(Check):
                 any_misapplied = True
                 continue
 
-            count = ctx.engine.count_outside(col, spec.min, spec.max)
+            count = counts[col]
             sample = (
                 ctx.engine.sample_outside(
                     col, spec.min, spec.max, ctx.config.sample_size

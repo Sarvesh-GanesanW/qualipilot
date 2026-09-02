@@ -191,6 +191,23 @@ def test_llm_initialisation_failure_is_structured(
     assert report.llm_error == "ImportError: provider unavailable"
 
 
+def test_gz_llm_report_records_resolved_provider(
+    tidy_pandas: pd.DataFrame,
+) -> None:
+    config = QualipilotConfig(llm=LLMConfig(connection_name="TestDataQuality"))
+
+    with patch("qualipilot.llm.build_provider") as build_provider:
+        provider = build_provider.return_value
+        provider.resolved_provider = "openai"
+        provider.resolved_model = "gpt-test"
+        provider.generate.return_value = "checked"
+        report = DataQualityChecker(tidy_pandas, config).run()
+
+    assert report.llm_status == "completed"
+    assert report.llm_provider == "openai"
+    assert report.llm_model == "gpt-test"
+
+
 def test_llm_summary_keeps_findings_but_removes_samples() -> None:
     summary = _summarise_payload(
         {
