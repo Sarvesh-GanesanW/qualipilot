@@ -21,7 +21,7 @@ FROM amazon/aws-lambda-python:3.12.2026.08.23.12-x86_64@sha256:bd34fee48872eb16c
 ARG VCS_REF=unknown
 ARG VERSION=3.3.0
 
-RUN dnf upgrade -y --releasever=2023.12.20260803 \
+RUN dnf upgrade -y --releasever=2023.12.20260831 \
     && dnf clean all
 
 LABEL org.opencontainers.image.source="https://github.com/Sarvesh-GanesanW/qualipilot" \

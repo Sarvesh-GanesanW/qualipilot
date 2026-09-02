@@ -19,6 +19,10 @@ This project follows [Semantic Versioning](https://semver.org/).
 - OpenAI project, Anthropic workspace, Anthropic sampling, and AWS Bedrock
   assume-role settings now follow the managed connection contract.
 
+### Fixed
+
+- Refreshed Lambda OS packages to include patched OpenSSL builds.
+
 ## [3.2.0] - 2026-08-26
 
 ### Added
