@@ -179,6 +179,7 @@ def test_gz_openai_uses_typed_getter_and_raw_model_fallback() -> None:
     connections.getOpenAIDetails.return_value = {
         "apiKey": secret,
         "baseUrl": "https://api.example.com/v1",
+        "projectId": "project-test",
     }
     config = LLMConfig(connection_name="TestDataQuality")
     fake_response = MagicMock()
@@ -206,6 +207,7 @@ def test_gz_openai_uses_typed_getter_and_raw_model_fallback() -> None:
     assert request.args[0] == "https://api.example.com/v1/chat/completions"
     assert request.kwargs["json"]["model"] == "gpt-from-connection"
     assert request.kwargs["headers"]["Authorization"] == f"Bearer {secret}"
+    assert request.kwargs["headers"]["OpenAI-Project"] == "project-test"
     assert secret not in config.model_dump_json()
     assert secret not in repr(provider)
     assert secret not in repr(provider._delegate._cfg)
@@ -247,6 +249,165 @@ def test_gz_azure_openai_uses_deployment_endpoint_and_api_key_header() -> None:
     assert request.kwargs["headers"]["api-key"] == "azure-secret"
     assert "Authorization" not in request.kwargs["headers"]
     assert "model" not in request.kwargs["json"]
+
+
+@pytest.mark.parametrize("api_version", ["v1", "2024-10-21"])
+def test_gz_azure_openai_preserves_current_endpoint(
+    api_version: str,
+) -> None:
+    connections = MagicMock()
+    connections.conn = {"Azure": {"type": "azureopenai"}}
+    connections.getAzureOpenAIDetails.return_value = {
+        "apiKey": "azure-secret",
+        "endpoint": "https://resource.openai.azure.com/openai/v1",
+        "deploymentName": "quality-model",
+        "apiVersion": api_version,
+    }
+    fake_response = MagicMock()
+    fake_response.raise_for_status.return_value = None
+    fake_response.json.return_value = {
+        "choices": [{"message": {"content": "checked"}}]
+    }
+
+    with (
+        patch("qualipilot.llm.gz.import_module", return_value=connections),
+        patch("httpx.Client") as client_cls,
+    ):
+        client = client_cls.return_value.__enter__.return_value
+        client.post.return_value = fake_response
+        provider = build_provider(LLMConfig(connection_name="Azure"))
+        result = provider.generate(system="system", user="summary")
+
+    request = client.post.call_args
+    assert result == "checked"
+    assert request.args[0] == (
+        "https://resource.openai.azure.com/openai/v1/chat/completions"
+    )
+    assert request.kwargs["json"]["model"] == "quality-model"
+
+
+def test_gz_azure_openai_preserves_responses_endpoint() -> None:
+    connections = MagicMock()
+    connections.conn = {"Azure": {"type": "azureopenai"}}
+    endpoint = "https://resource.openai.azure.com/openai/v1/responses"
+    connections.getAzureOpenAIDetails.return_value = {
+        "apiKey": "azure-secret",
+        "endpoint": endpoint,
+        "deploymentName": "quality-model",
+        "apiVersion": "v1",
+    }
+
+    with patch("qualipilot.llm.gz.import_module", return_value=connections):
+        provider = build_provider(LLMConfig(connection_name="Azure"))
+
+    assert provider._delegate._completion_url == endpoint
+
+
+@pytest.mark.parametrize(
+    "response_data",
+    [
+        {"output_text": "checked"},
+        {
+            "output": [
+                {
+                    "type": "message",
+                    "content": [{"type": "output_text", "text": "checked"}],
+                }
+            ]
+        },
+    ],
+)
+def test_gz_xai_uses_saved_responses_endpoint(
+    response_data: dict[str, object],
+) -> None:
+    connections = MagicMock()
+    connections.conn = {"Grok": {"type": "XAI"}}
+    connections.getXAIDetails.return_value = {
+        "apiKey": "xai-secret",
+        "baseUrl": "https://api.x.ai/v1/responses",
+        "model": "grok-4",
+    }
+    fake_response = MagicMock()
+    fake_response.raise_for_status.return_value = None
+    fake_response.json.return_value = response_data
+
+    with (
+        patch("qualipilot.llm.gz.import_module", return_value=connections),
+        patch("httpx.Client") as client_cls,
+    ):
+        client = client_cls.return_value.__enter__.return_value
+        client.post.return_value = fake_response
+        provider = build_provider(
+            LLMConfig(connection_name="Grok", max_tokens=99)
+        )
+        result = provider.generate(system="system", user="summary")
+
+    request = client.post.call_args
+    assert result == "checked"
+    connections.getXAIDetails.assert_called_once_with("Grok")
+    assert request.args[0] == "https://api.x.ai/v1/responses"
+    assert request.kwargs["headers"]["Authorization"] == "Bearer xai-secret"
+    assert request.kwargs["json"] == {
+        "model": "grok-4",
+        "temperature": 0.2,
+        "max_output_tokens": 99,
+        "input": [
+            {"role": "system", "content": "system"},
+            {"role": "user", "content": "summary"},
+        ],
+    }
+
+
+def test_openai_responses_rejects_malformed_response() -> None:
+    provider = build_provider(
+        LLMConfig(
+            provider="openai",
+            base_url="https://api.example.com/v1/responses",
+            model="test-model",
+            retries=0,
+        )
+    )
+    fake_response = MagicMock()
+    fake_response.raise_for_status.return_value = None
+    fake_response.json.return_value = None
+
+    with patch("httpx.Client") as client_cls:
+        client_cls.return_value.__enter__.return_value.post.return_value = (
+            fake_response
+        )
+        with pytest.raises(
+            RuntimeError,
+            match="unexpected openai-compatible response shape",
+        ):
+            provider.generate(system="system", user="summary")
+
+
+def test_gz_together_uses_current_default_url() -> None:
+    connections = MagicMock()
+    connections.conn = {"Together": {"type": "togetherai"}}
+    connections.getTogetherAIDetails.return_value = {
+        "apiKey": "together-secret",
+        "model": "meta-llama/test",
+    }
+    fake_response = MagicMock()
+    fake_response.raise_for_status.return_value = None
+    fake_response.json.return_value = {
+        "choices": [{"message": {"content": "checked"}}]
+    }
+
+    with (
+        patch("qualipilot.llm.gz.import_module", return_value=connections),
+        patch("httpx.Client") as client_cls,
+    ):
+        client = client_cls.return_value.__enter__.return_value
+        client.post.return_value = fake_response
+        provider = build_provider(LLMConfig(connection_name="Together"))
+        result = provider.generate(system="system", user="summary")
+
+    assert result == "checked"
+    assert client.post.call_args.args[0] == (
+        "https://api.together.ai/v1/chat/completions"
+    )
 
 
 def test_gz_bedrock_uses_connection_credentials() -> None:
@@ -293,13 +454,65 @@ def test_gz_bedrock_uses_connection_credentials() -> None:
     assert secret not in repr(provider)
 
 
+def test_gz_bedrock_assumes_configured_role() -> None:
+    pytest.importorskip("boto3")
+    connections = MagicMock()
+    connections.conn = {
+        "Bedrock": {
+            "type": "awsbedrock",
+            "model": "anthropic.test-model-v1",
+        }
+    }
+    connections.getAwsBedrockDetails.return_value = {
+        "accessKey": "source-access",
+        "secretAccessKey": "source-secret",
+        "sessionToken": "source-token",
+        "region": "eu-west-1",
+        "assumeRoleArn": "arn:aws:iam::123456789012:role/quality",
+        "roleArn": "arn:aws:iam::123456789012:role/customization",
+    }
+    sts = MagicMock()
+    sts.assume_role.return_value = {
+        "Credentials": {
+            "AccessKeyId": "assumed-access",
+            "SecretAccessKey": "assumed-secret",
+            "SessionToken": "assumed-token",
+        }
+    }
+    runtime = MagicMock()
+    session = MagicMock()
+    session.client.side_effect = [sts, runtime]
+
+    with (
+        patch("qualipilot.llm.gz.import_module", return_value=connections),
+        patch("boto3.Session", return_value=session) as session_class,
+    ):
+        build_provider(LLMConfig(connection_name="Bedrock"))
+
+    sts.assume_role.assert_called_once_with(
+        RoleArn="arn:aws:iam::123456789012:role/quality",
+        RoleSessionName="qualipilot-gz",
+    )
+    assert session_class.call_args_list[0].kwargs == {
+        "region_name": "eu-west-1",
+        "aws_access_key_id": "source-access",
+        "aws_secret_access_key": "source-secret",
+        "aws_session_token": "source-token",
+    }
+    assert session_class.call_args_list[1].kwargs == {
+        "region_name": "eu-west-1",
+        "aws_access_key_id": "assumed-access",
+        "aws_secret_access_key": "assumed-secret",
+        "aws_session_token": "assumed-token",
+    }
+
+
 def test_gz_gemini_keeps_api_key_out_of_url() -> None:
     secret = "gz-gemini-secret"
     connections = MagicMock()
     connections.conn = {"Gemini": {"type": "gemini"}}
     connections.getGeminiDetails.return_value = {
         "apiKey": secret,
-        "baseUrl": "https://generativelanguage.googleapis.com/v1beta",
         "model": "gemini-test",
     }
     fake_response = MagicMock()
@@ -322,6 +535,10 @@ def test_gz_gemini_keeps_api_key_out_of_url() -> None:
 
     request = client.post.call_args
     assert result == "checked"
+    assert request.args[0] == (
+        "https://generativelanguage.googleapis.com/v1/"
+        "models/gemini-test:generateContent"
+    )
     assert secret not in request.args[0]
     assert request.kwargs["headers"]["x-goog-api-key"] == secret
 
@@ -354,7 +571,7 @@ def test_gz_requires_an_explicit_model(
         build_provider(LLMConfig(connection_name="NoModel"))
 
 
-def test_gz_huggingface_requires_an_explicit_endpoint() -> None:
+def test_gz_huggingface_uses_current_router_contract() -> None:
     connections = MagicMock()
     connections.conn = {
         "HuggingFace": {
@@ -363,18 +580,74 @@ def test_gz_huggingface_requires_an_explicit_endpoint() -> None:
         }
     }
     connections.getHuggingFaceDetails.return_value = {"apiKey": "secret"}
+    fake_response = MagicMock()
+    fake_response.raise_for_status.return_value = None
+    fake_response.json.return_value = {
+        "choices": [{"message": {"content": "checked"}}]
+    }
 
     with (
-        patch(
-            "qualipilot.llm.gz.import_module",
-            return_value=connections,
-        ),
-        pytest.raises(
-            ValueError,
-            match="requires inferenceEndpointUrl or inferenceBaseUrl",
-        ),
+        patch("qualipilot.llm.gz.import_module", return_value=connections),
+        patch("httpx.Client") as client_cls,
     ):
-        build_provider(LLMConfig(connection_name="HuggingFace"))
+        client = client_cls.return_value.__enter__.return_value
+        client.post.return_value = fake_response
+        provider = build_provider(LLMConfig(connection_name="HuggingFace"))
+        result = provider.generate(system="system", user="summary")
+
+    request = client.post.call_args
+    assert result == "checked"
+    assert request.args[0] == (
+        "https://router.huggingface.co/v1/chat/completions"
+    )
+    assert request.kwargs["json"]["model"] == "org/model"
+
+
+@pytest.mark.parametrize(
+    ("endpoint", "expected_base"),
+    [
+        (
+            "https://endpoint.example.com/v1/responses",
+            "https://endpoint.example.com/v1/responses",
+        ),
+        ("https://endpoint.example.com", "https://endpoint.example.com/v1"),
+    ],
+)
+def test_gz_huggingface_routes_openai_compatible_endpoint(
+    endpoint: str,
+    expected_base: str,
+) -> None:
+    connections = MagicMock()
+    connections.conn = {
+        "HuggingFace": {
+            "type": "huggingface",
+            "model": "org/model",
+        }
+    }
+    connections.getHuggingFaceDetails.return_value = {
+        "apiKey": "secret",
+        "inferenceEndpointUrl": endpoint,
+    }
+
+    with patch("qualipilot.llm.gz.import_module", return_value=connections):
+        provider = build_provider(LLMConfig(connection_name="HuggingFace"))
+
+    assert provider._delegate._base == expected_base
+
+
+@pytest.mark.parametrize(
+    ("model", "expected"),
+    [
+        ("claude-mythos-test", False),
+        ("claude-sonnet-5", False),
+        ("claude-opus-4-7", False),
+        ("claude-sonnet-4-6", True),
+    ],
+)
+def test_gz_anthropic_sampling_contract(model: str, expected: bool) -> None:
+    from qualipilot.llm.gz import _anthropic_supports_sampling
+
+    assert _anthropic_supports_sampling(model) is expected
 
 
 @pytest.mark.parametrize(
@@ -395,8 +668,9 @@ def test_gz_huggingface_requires_an_explicit_endpoint() -> None:
             {
                 "apiKey": "native-secret",
                 "baseUrl": "https://api.anthropic.com",
-                "model": "claude-test",
-                "anthropicVersion": "2023-06-01",
+                "model": "claude-opus-4-8",
+                "anthropicVersion": "",
+                "anthropicWorkspaceId": "workspace-test",
             },
             {},
             {"content": [{"text": "checked"}]},
@@ -404,11 +678,11 @@ def test_gz_huggingface_requires_an_explicit_endpoint() -> None:
             {
                 "x-api-key": "native-secret",
                 "anthropic-version": "2023-06-01",
+                "anthropic-workspace-id": "workspace-test",
             },
             {
-                "model": "claude-test",
+                "model": "claude-opus-4-8",
                 "max_tokens": 99,
-                "temperature": 0.3,
                 "messages": [{"role": "user", "content": "summary"}],
                 "system": "system",
             },

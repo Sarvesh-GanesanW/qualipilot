@@ -4,6 +4,21 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [3.3.0] - 2026-09-02
+
+### Added
+
+- Managed GroundZero xAI connections and OpenAI Responses API endpoints.
+
+### Changed
+
+- GroundZero LLM connections now follow current provider defaults and preserve
+  complete Chat Completions or Responses endpoint URLs.
+- Hugging Face router endpoints use the OpenAI-compatible API while legacy
+  inference endpoints remain supported.
+- OpenAI project, Anthropic workspace, Anthropic sampling, and AWS Bedrock
+  assume-role settings now follow the managed connection contract.
+
 ## [3.2.0] - 2026-08-26
 
 ### Added

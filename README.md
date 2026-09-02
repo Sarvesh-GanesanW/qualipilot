@@ -173,12 +173,16 @@ scripts in `scripts/` to measure your own workload.
 ## Optional LLM reporting
 
 Available direct providers are `bedrock`, `ollama`, and `openai` (for
-compatible Chat Completions endpoints). `LLMConfig(connection_name="...")`
-selects `gz` automatically and resolves the managed connection's actual
-provider at call time. The provider receives a compact summary of the quality
-report: column names and dtypes, aggregate check metrics, and check execution
-status. Input paths, source versions, exception messages, row samples, and top
-values are excluded. Keep the default `none` for fully local checks.
+compatible Chat Completions and Responses endpoints).
+`LLMConfig(connection_name="...")` selects `gz` automatically and resolves
+the managed connection's actual provider at call time. Managed Anthropic, AWS
+Bedrock, Azure OpenAI, Cohere, Fireworks AI, Gemini, Hugging Face, OpenAI,
+Together AI, and xAI connections are supported, including complete Chat
+Completions and Responses endpoint URLs. The provider receives a compact
+summary of the quality report: column names and dtypes, aggregate check
+metrics, and check execution status. Input paths, source versions, exception
+messages, row samples, and top values are excluded. Keep the default `none`
+for fully local checks.
 
 Bedrock requires an explicit, currently available model ID:
 

@@ -1,6 +1,6 @@
 """OpenAI-compatible provider.
 
-Works against any server that implements the Chat Completions API:
+Works against any server that implements Chat Completions or Responses:
 OpenAI itself, Azure OpenAI, vLLM, LiteLLM proxy, LocalAI, etc.
 """
 
@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Mapping
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 from tenacity import (
@@ -73,7 +74,12 @@ class OpenAICompatProvider(LLMProvider):
         return str(retrying(self._post, payload))
 
     def _post(self, payload: dict[str, Any]) -> str:
-        url = self._completion_url or f"{self._base}/chat/completions"
+        url = self._completion_url or self._base
+        operation = _openai_operation(url)
+        if operation is None:
+            url = f"{url}/chat/completions"
+        elif operation == "responses":
+            payload = _responses_payload(payload)
         headers = {
             "Content-Type": "application/json",
             **self._extra_headers,
@@ -92,7 +98,11 @@ class OpenAICompatProvider(LLMProvider):
             data = response.json()
 
         try:
-            content = data["choices"][0]["message"]["content"]
+            content = (
+                _responses_text(data)
+                if operation == "responses"
+                else data["choices"][0]["message"]["content"]
+            )
             if not isinstance(content, str) or not content:
                 raise ValueError("response content is empty")
             return content
@@ -100,3 +110,38 @@ class OpenAICompatProvider(LLMProvider):
             raise RuntimeError(
                 "unexpected openai-compatible response shape"
             ) from exc
+
+
+def _openai_operation(url: str) -> str | None:
+    path = urlsplit(url).path.rstrip("/")
+    if path.endswith("/responses"):
+        return "responses"
+    if path.endswith("/chat/completions"):
+        return "chat/completions"
+    return None
+
+
+def _responses_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
+    result = dict(payload)
+    result["input"] = result.pop("messages")
+    result["max_output_tokens"] = result.pop("max_tokens")
+    return result
+
+
+def _responses_text(data: Any) -> str:
+    if not isinstance(data, Mapping):
+        return ""
+    if isinstance(data.get("output_text"), str):
+        return str(data["output_text"])
+    output = data.get("output")
+    if not isinstance(output, list):
+        return ""
+    return "".join(
+        str(block["text"])
+        for item in output
+        if isinstance(item, Mapping) and item.get("type") == "message"
+        for block in item.get("content", [])
+        if isinstance(block, Mapping)
+        and block.get("type") == "output_text"
+        and isinstance(block.get("text"), str)
+    )

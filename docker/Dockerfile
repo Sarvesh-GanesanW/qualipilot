@@ -26,7 +26,7 @@ RUN if [ -n "${EXTRAS}" ]; then \
 FROM python:3.12.13-slim-bookworm@sha256:8a7e7cc04fd3e2bd787f7f24e22d5d119aa590d429b50c95dfe12b3abe52f48b AS runtime
 
 ARG VCS_REF=unknown
-ARG VERSION=3.2.0
+ARG VERSION=3.3.0
 
 LABEL org.opencontainers.image.source="https://github.com/Sarvesh-GanesanW/qualipilot" \
       org.opencontainers.image.revision="${VCS_REF}" \

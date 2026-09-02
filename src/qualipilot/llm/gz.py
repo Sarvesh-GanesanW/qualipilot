@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from contextlib import suppress
 from importlib import import_module
 from typing import Any, Literal
-from urllib.parse import quote, urlencode
+from urllib.parse import quote, urlencode, urlsplit
 
 import httpx
 from pydantic import SecretStr
@@ -36,6 +37,7 @@ _GETTERS = {
     "huggingface": "getHuggingFaceDetails",
     "openai": "getOpenAIDetails",
     "togetherai": "getTogetherAIDetails",
+    "xai": "getXAIDetails",
 }
 
 _CANONICAL_TYPES = {
@@ -50,6 +52,7 @@ _OPENAI_COMPATIBLE = {
     "fireworksai",
     "openai",
     "togetherai",
+    "xai",
 }
 
 
@@ -171,7 +174,7 @@ def _build_openai_delegate(
         api_version = _header_text(
             details.get("apiVersion")
             or raw_connection.get("apiVersion")
-            or "2024-10-21",
+            or "v1",
             "apiVersion",
             connection_name,
         )
@@ -183,9 +186,29 @@ def _build_openai_delegate(
             api_key=api_key,
         )
         base_url = delegate_cfg.base_url.rstrip("/")
-        current_api = api_version in {"preview", "v1"}
-        if current_api:
-            completion_url = f"{base_url}/openai/v1/chat/completions"
+        operation_path = urlsplit(base_url).path.rstrip("/")
+        operation = (
+            "responses"
+            if operation_path.endswith("/responses")
+            else (
+                "chat/completions"
+                if operation_path.endswith("/chat/completions")
+                else None
+            )
+        )
+        current_api = api_version in {
+            "preview",
+            "v1",
+        } or operation_path.endswith("/openai/v1")
+        if operation is not None:
+            completion_url = base_url
+        elif current_api:
+            current_base = (
+                base_url
+                if base_url.endswith("/openai/v1")
+                else f"{base_url}/openai/v1"
+            )
+            completion_url = f"{current_base}/chat/completions"
             if api_version == "preview":
                 completion_url += "?" + urlencode({"api-version": "preview"})
         else:
@@ -199,14 +222,15 @@ def _build_openai_delegate(
             completion_url=completion_url,
             auth_header="api-key",
             auth_scheme="",
-            include_model=current_api,
+            include_model=current_api or operation == "responses",
         )
 
     defaults = {
         "fireworks": "https://api.fireworks.ai/inference/v1",
         "fireworksai": "https://api.fireworks.ai/inference/v1",
         "openai": "https://api.openai.com/v1",
-        "togetherai": "https://api.together.xyz/v1",
+        "togetherai": "https://api.together.ai/v1",
+        "xai": "https://api.x.ai/v1",
     }
     model = _model(
         details,
@@ -235,6 +259,13 @@ def _build_openai_delegate(
         extra_headers["OpenAI-Organization"] = _header_text(
             organization,
             "organizationId",
+            connection_name,
+        )
+    project = details.get("projectId") or raw_connection.get("projectId")
+    if project:
+        extra_headers["OpenAI-Project"] = _header_text(
+            project,
+            "projectId",
             connection_name,
         )
     return OpenAICompatProvider(
@@ -281,6 +312,20 @@ def _build_bedrock_delegate(
         session_kwargs["aws_session_token"] = _secret(
             session_token, "sessionToken", connection_name
         )
+    assume_role_arn = details.get("assumeRoleArn") or raw_connection.get(
+        "assumeRoleArn"
+    )
+    if assume_role_arn:
+        session_kwargs = _assume_role_credentials(
+            region,
+            session_kwargs,
+            _header_text(
+                assume_role_arn,
+                "assumeRoleArn",
+                connection_name,
+            ),
+            connection_name,
+        )
     delegate_cfg = _delegate_config(
         cfg,
         provider="bedrock",
@@ -293,13 +338,53 @@ def _build_bedrock_delegate(
     )
 
 
+def _assume_role_credentials(
+    region: str,
+    session_kwargs: Mapping[str, str],
+    role_arn: str,
+    connection_name: str,
+) -> dict[str, str]:
+    import boto3
+
+    session = boto3.Session(region_name=region, **session_kwargs)
+    sts = session.client("sts")
+    try:
+        response = sts.assume_role(
+            RoleArn=role_arn,
+            RoleSessionName="qualipilot-gz",
+        )
+    finally:
+        with suppress(Exception):
+            sts.close()
+    credentials = response.get("Credentials")
+    if not isinstance(credentials, Mapping):
+        raise RuntimeError("STS AssumeRole did not return credentials")
+    return {
+        "aws_access_key_id": _secret(
+            credentials.get("AccessKeyId"),
+            "AccessKeyId",
+            connection_name,
+        ),
+        "aws_secret_access_key": _secret(
+            credentials.get("SecretAccessKey"),
+            "SecretAccessKey",
+            connection_name,
+        ),
+        "aws_session_token": _secret(
+            credentials.get("SessionToken"),
+            "SessionToken",
+            connection_name,
+        ),
+    }
+
+
 def _build_native_http_delegate(
     cfg: LLMConfig,
     connection_name: str,
     connection_type: str,
     details: Mapping[str, Any],
     raw_connection: Mapping[str, Any],
-) -> _GZNativeHTTPProvider:
+) -> LLMProvider:
     model = _model(
         details,
         raw_connection,
@@ -309,8 +394,9 @@ def _build_native_http_delegate(
     defaults = {
         "anthropic": "https://api.anthropic.com",
         "cohere": "https://api.cohere.com",
-        "gemini": "https://generativelanguage.googleapis.com/v1beta",
+        "gemini": "https://generativelanguage.googleapis.com/v1",
     }
+    extra_headers: dict[str, str] = {}
     if connection_type == "huggingface":
         endpoint = details.get("inferenceEndpointUrl") or raw_connection.get(
             "inferenceEndpointUrl"
@@ -323,19 +409,42 @@ def _build_native_http_delegate(
                     endpoint, "inferenceEndpointUrl", connection_name
                 ),
             )
+            path = urlsplit(request_url).path.rstrip("/")
+            uses_openai_compatibility = path.endswith(
+                ("/responses", "/chat/completions")
+            ) or not (
+                "/models/" in path
+                or path.endswith(("/generate", "/generate_stream"))
+            )
+            if uses_openai_compatibility and not (
+                path.endswith(("/v1", "/responses", "/chat/completions"))
+            ):
+                request_url += "/v1"
         else:
             inference_base = _public_text(
                 details.get("inferenceBaseUrl")
-                or raw_connection.get("inferenceBaseUrl"),
+                or raw_connection.get("inferenceBaseUrl")
+                or "https://router.huggingface.co/v1",
                 "inferenceEndpointUrl or inferenceBaseUrl",
                 connection_name,
             )
-            base_url = _validated_base_url(
+            request_url = _validated_base_url(
                 cfg,
                 model,
                 inference_base,
             )
-            request_url = f"{base_url}/models/{quote(model, safe='')}"
+            uses_openai_compatibility = request_url.endswith("/v1")
+            if not uses_openai_compatibility:
+                request_url += f"/models/{quote(model, safe='')}"
+        if uses_openai_compatibility:
+            delegate_cfg = _delegate_config(
+                cfg,
+                provider="openai",
+                model=model,
+                base_url=request_url,
+                api_key=api_key,
+            )
+            return OpenAICompatProvider(delegate_cfg)
         api_version = ""
     else:
         base_url = _validated_base_url(
@@ -364,6 +473,15 @@ def _build_native_http_delegate(
                 "anthropicVersion",
                 connection_name,
             )
+            workspace_id = details.get(
+                "anthropicWorkspaceId"
+            ) or raw_connection.get("anthropicWorkspaceId")
+            if workspace_id:
+                extra_headers["anthropic-workspace-id"] = _header_text(
+                    workspace_id,
+                    "anthropicWorkspaceId",
+                    connection_name,
+                )
     return _GZNativeHTTPProvider(
         cfg,
         connection_type=connection_type,
@@ -371,6 +489,7 @@ def _build_native_http_delegate(
         request_url=request_url,
         api_key=api_key,
         api_version=api_version,
+        extra_headers=extra_headers,
     )
 
 
@@ -386,6 +505,7 @@ class _GZNativeHTTPProvider(LLMProvider):
         request_url: str,
         api_key: str,
         api_version: str,
+        extra_headers: Mapping[str, str],
     ) -> None:
         self._cfg = cfg
         self._connection_type = connection_type
@@ -393,6 +513,7 @@ class _GZNativeHTTPProvider(LLMProvider):
         self._request_url = request_url
         self._api_key = SecretStr(api_key)
         self._api_version = api_version
+        self._extra_headers = dict(extra_headers)
 
     def generate(self, *, system: str, user: str) -> str:
         payload = self._payload(system, user)
@@ -410,9 +531,10 @@ class _GZNativeHTTPProvider(LLMProvider):
             payload: dict[str, Any] = {
                 "model": self._model,
                 "max_tokens": self._cfg.max_tokens,
-                "temperature": self._cfg.temperature,
                 "messages": [{"role": "user", "content": user}],
             }
+            if _anthropic_supports_sampling(self._model):
+                payload["temperature"] = self._cfg.temperature
             if system:
                 payload["system"] = system
             return payload
@@ -462,6 +584,7 @@ class _GZNativeHTTPProvider(LLMProvider):
             headers["x-goog-api-key"] = api_key
         else:
             headers["Authorization"] = f"Bearer {api_key}"
+        headers.update(self._extra_headers)
         with httpx.Client(timeout=self._cfg.timeout_seconds) as client:
             response = client.post(
                 self._request_url,
@@ -522,6 +645,20 @@ def _join_text(value: Any) -> str:
         for item in value
         if isinstance(item, Mapping)
     )
+
+
+def _anthropic_supports_sampling(model: str) -> bool:
+    parts = model.lower().split("-")
+    if len(parts) < 3 or parts[0] != "claude":
+        return True
+    if parts[1] == "mythos":
+        return False
+    try:
+        major = int(parts[2])
+        minor = int(parts[3]) if len(parts) > 3 else 0
+    except ValueError:
+        return True
+    return major < 5 and not (parts[1] == "opus" and major == 4 and minor >= 7)
 
 
 def _gemini_model_resource(model: str) -> str:
