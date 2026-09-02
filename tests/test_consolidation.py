@@ -227,6 +227,44 @@ def test_deduplicate_validates_consolidation_before_linking(
         )
 
 
+def test_deduplicate_requires_opt_in_for_warning_fit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    frame = pl.DataFrame({"id": [1, 2], "name": ["Alice", "Alice"]})
+
+    monkeypatch.setattr(
+        RecordLinker,
+        "run",
+        lambda _self: LinkageResult(
+            pairs=pl.DataFrame(
+                {
+                    "__id_l__": [1],
+                    "__id_r__": [2],
+                    "match_probability": [0.99],
+                }
+            ),
+            clusters={1: 0, 2: 0},
+            parameters={
+                "fit": {
+                    "status": "warning",
+                    "warnings": ["EM did not converge within 15 iterations"],
+                }
+            },
+        ),
+    )
+    config = LinkConfig(
+        unique_id_column="id",
+        comparisons=[ExactMatch(column="name")],
+    )
+
+    with pytest.raises(ValueError, match="warning linkage fit"):
+        RecordLinker(frame, config).deduplicate(ConsolidationConfig())
+
+    allowed = config.model_copy(update={"allow_warning_fit": True})
+    result = RecordLinker(frame, allowed).deduplicate(ConsolidationConfig())
+    assert result.consolidation.removed_count == 1
+
+
 @pytest.mark.parametrize(
     ("cluster_size", "expected_rank_calls", "expected_frame_reads"),
     [(1, 0, 1), (2, 1, 0)],

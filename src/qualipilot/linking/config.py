@@ -83,6 +83,7 @@ class LinkConfig(BaseModel):
 
     em_max_iter: int = Field(default=15, ge=1, le=200)
     em_tolerance: float = Field(default=1e-3, gt=0)
+    allow_warning_fit: bool = False
 
     # when the blocking output is huge, learning m/u on every pair is
     # wasteful — we fit EM on a random sample then score all pairs

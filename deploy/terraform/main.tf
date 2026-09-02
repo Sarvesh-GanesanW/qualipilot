@@ -511,6 +511,48 @@ resource "aws_cloudwatch_metric_alarm" "lambda_throttles" {
   }
 }
 
+resource "aws_cloudwatch_metric_alarm" "lambda_duration" {
+  count = var.image_digest == null ? 0 : 1
+
+  alarm_name          = "${local.name}-lambda-duration"
+  alarm_description   = "The qualipilot Lambda used at least 80% of its timeout."
+  namespace           = "AWS/Lambda"
+  metric_name         = "Duration"
+  statistic           = "Maximum"
+  period              = 300
+  evaluation_periods  = 1
+  threshold           = var.timeout_seconds * 1000 * 0.8
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = var.alarm_action_arns
+  ok_actions          = var.alarm_action_arns
+
+  dimensions = {
+    FunctionName = aws_lambda_function.checker[0].function_name
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "lambda_concurrency" {
+  count = var.image_digest == null ? 0 : 1
+
+  alarm_name          = "${local.name}-lambda-concurrency"
+  alarm_description   = "The qualipilot Lambda approached its concurrency limit."
+  namespace           = "AWS/Lambda"
+  metric_name         = "ConcurrentExecutions"
+  statistic           = "Maximum"
+  period              = 300
+  evaluation_periods  = 1
+  threshold           = max(1, floor(var.reserved_concurrency * 0.8))
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = var.alarm_action_arns
+  ok_actions          = var.alarm_action_arns
+
+  dimensions = {
+    FunctionName = aws_lambda_function.checker[0].function_name
+  }
+}
+
 resource "aws_cloudwatch_metric_alarm" "destination_delivery_failures" {
   count = var.image_digest == null ? 0 : 1
 

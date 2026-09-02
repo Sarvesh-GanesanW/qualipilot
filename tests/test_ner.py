@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from importlib.metadata import version
 from pathlib import Path
 
 import polars as pl
@@ -52,8 +53,10 @@ def test_extracts_stable_character_offsets(ner_model: Path) -> None:
     )
     assert recognizer.metadata == {
         "source": str(ner_model),
+        "spacy_version": version("spacy"),
         "name": "qualipilot_test_ner",
         "version": "1.2.3",
+        "license": "unknown",
         "language": "en",
         "pipeline": ["entity_ruler"],
     }
@@ -68,6 +71,11 @@ def test_batches_and_filters_labels(ner_model: Path) -> None:
         ["OpenAI"],
         [],
     ]
+
+
+def test_rejects_unknown_label_filter(ner_model: Path) -> None:
+    with pytest.raises(ValueError, match=r"not provided.*TYPO"):
+        SpacyEntityRecognizer(ner_model, labels=["TYPO"])
 
 
 def test_rejects_invalid_text_and_pipeline(tmp_path: Path) -> None:

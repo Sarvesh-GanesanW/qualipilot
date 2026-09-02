@@ -58,6 +58,12 @@ def render_markdown(report: QualityReport) -> str:
     if report.llm_report:
         parts.append("## LLM Findings")
         parts.append("")
+        parts.append("AI-generated advisory; validate before acting.")
+        if report.llm_provider:
+            parts.append(f"- provider: {_inline_code(report.llm_provider)}")
+        if report.llm_model:
+            parts.append(f"- model: {_inline_code(report.llm_model)}")
+        parts.append("")
         parts.extend(
             f"    {html.escape(line, quote=False)}"
             for line in report.llm_report.splitlines()

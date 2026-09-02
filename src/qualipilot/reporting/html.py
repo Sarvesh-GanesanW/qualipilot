@@ -49,8 +49,15 @@ def render_html(report: QualityReport) -> str:
 
     llm_html = ""
     if report.llm_report:
+        provenance = "AI-generated advisory"
+        if report.llm_provider:
+            provenance += f" by {html.escape(report.llm_provider)}"
+        if report.llm_model:
+            provenance += f" / {html.escape(report.llm_model)}"
         llm_html = (
-            f"<h2>LLM Findings</h2><pre>{html.escape(report.llm_report)}</pre>"
+            f"<h2>LLM Findings</h2><p class='muted'>{provenance}. "
+            "Validate before acting.</p>"
+            f"<pre>{html.escape(report.llm_report)}</pre>"
         )
     elif report.llm_error:
         llm_html = (

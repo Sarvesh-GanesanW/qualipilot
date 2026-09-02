@@ -45,6 +45,17 @@ _DEFAULT_MAX_DATASET_BYTES = 1024 * 1024 * 1024
 _MAX_COLUMNS = 10_000
 _TEXT_MEMORY_FACTOR = 8
 _PACKAGE_VERSION = version("qualipilot")
+_S3_CLIENT: Any | None = None
+
+
+def _s3_client() -> Any:
+    """Reuse the SDK connection pool across warm Lambda invocations."""
+    global _S3_CLIENT  # noqa: PLW0603
+    if _S3_CLIENT is None:
+        import boto3
+
+        _S3_CLIENT = boto3.client("s3")
+    return _S3_CLIENT
 
 
 def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
@@ -65,9 +76,7 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     if not inputs:
         return {"processed": 0, "skipped": skipped, "results": []}
 
-    import boto3
-
-    s3 = boto3.client("s3")
+    s3 = _s3_client()
     if "s3_uri" in event:
         results = [
             _process_object(

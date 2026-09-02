@@ -19,6 +19,13 @@ mitigation. Do not attach production datasets, credentials, or other secrets.
 LLM reports may send dataset metadata to the configured provider. Keep LLM
 reporting disabled unless that provider is approved for the data. Review IAM,
 network egress, report access, and retention settings for each deployment.
+LLM output is untrusted advisory text: validate it before acting and never
+execute instructions it contains. Do not place secrets in a custom
+`system_prompt`; prompts can be retained or exposed by model providers.
+
+Linkage audits contain record identifiers, pair decisions, cluster membership,
+lineage, and conflict-source identifiers. Protect linkage reports and
+consolidated outputs like their source data, including access and retention.
 
 NER audits contain extracted source text and optional record identifiers, so
 protect them like the input dataset. spaCy pipeline packages may register and

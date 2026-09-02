@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import asdict, dataclass
+from importlib.metadata import version
 from pathlib import Path
 from typing import Any
 
@@ -71,8 +72,10 @@ class SpacyEntityRecognizer:
                 f"spaCy pipeline {model_reference!r} has no enabled "
                 "'ner' or 'entity_ruler' component"
             )
+        _validate_label_filter(nlp, selected_labels, entity_components)
 
         self._nlp: Any = nlp
+        self._spacy_version = version("spacy")
         self._model_reference = model_reference
         self._labels = selected_labels
         self._batch_size = batch_size
@@ -84,8 +87,10 @@ class SpacyEntityRecognizer:
         meta = self._nlp.meta
         return {
             "source": self._model_reference,
+            "spacy_version": self._spacy_version,
             "name": str(meta.get("name") or self._model_reference),
             "version": str(meta.get("version") or "unknown"),
+            "license": str(meta.get("license") or "unknown"),
             "language": str(meta.get("lang") or self._nlp.lang),
             "pipeline": list(self._nlp.pipe_names),
         }
@@ -136,3 +141,22 @@ class SpacyEntityRecognizer:
                     f"pipeline maximum is {self._nlp.max_length}"
                 )
             yield text
+
+
+def _validate_label_filter(
+    nlp: Any,
+    selected: frozenset[str] | None,
+    entity_components: set[str],
+) -> None:
+    if selected is None:
+        return
+    available = {
+        label
+        for component in entity_components
+        for label in nlp.pipe_labels.get(component, [])
+    }
+    unknown = sorted(selected - available)
+    if unknown:
+        raise ValueError(
+            f"labels are not provided by the spaCy pipeline: {unknown}"
+        )

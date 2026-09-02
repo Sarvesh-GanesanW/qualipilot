@@ -41,6 +41,7 @@ class _S3:
         self.download_kwargs: list[dict[str, Any]] = []
         self.puts: list[dict[str, Any]] = []
         self.put_attempts = 0
+        self.client_calls: list[str] = []
         self.reports: dict[str, dict[str, Any]] = {}
 
     def head_object(self, **kwargs: Any) -> dict[str, Any]:
@@ -129,8 +130,13 @@ class _Checker:
 
 
 def _install_fakes(monkeypatch: pytest.MonkeyPatch, s3: _S3) -> None:
-    boto3 = SimpleNamespace(client=lambda service: s3)
+    def client(service: str) -> _S3:
+        s3.client_calls.append(service)
+        return s3
+
+    boto3 = SimpleNamespace(client=client)
     monkeypatch.setitem(sys.modules, "boto3", boto3)
+    monkeypatch.setattr(lambda_handler, "_S3_CLIENT", None)
     monkeypatch.setattr(lambda_handler, "DataQualityChecker", _Checker)
 
 
@@ -373,6 +379,7 @@ def test_duplicate_event_reuses_existing_report(
 
     assert first["cached"] is False
     assert second["cached"] is True
+    assert s3.client_calls == ["s3"]
     assert len(s3.downloads) == 1
     assert len(s3.puts) == 1
     metrics = [

@@ -267,8 +267,9 @@ failure prefix. Direct invocation configuration overrides
 ## Operations and security
 
 - CloudWatch retains function logs for 30 days by default. The required
-  `alarm_action_arns` route runtime, delivery, quality, LLM, and
-  failure-queue alarms.
+  `alarm_action_arns` route errors, throttles, duration, concurrency, delivery,
+  quality, LLM, and failure-queue alarms. Duration alerts at 80% of the
+  configured timeout and concurrency at 80% of the reserved limit.
 - Deterministic asynchronous failures are sent directly to the SQS failure
   destination without a paid retry. Messages remain there for 14 days.
 - Reserved concurrency defaults to five to bound account impact. Tune it

@@ -59,7 +59,10 @@ sensitive data; protect it like the input dataset.
 
 Pipeline packages can register and execute Python components when spaCy loads
 them. Install models only from trusted sources, pin them in the application
-build, and review them like any other executable dependency.
+build, record the approved wheel's SHA-256 in deployment evidence, and review
+them like any other executable dependency. The audit records the spaCy runtime,
+model name, version, license metadata, language, and enabled pipeline; a local
+model path is mutable and is not itself an integrity guarantee.
 
 The CLI loads the input table and generated JSON audit in memory. `batch_size`
 controls spaCy inference batching, not total report size; partition very large

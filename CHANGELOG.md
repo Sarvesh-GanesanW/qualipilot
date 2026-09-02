@@ -4,6 +4,27 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Standards/assurance mapping, a reproducible 100-million-row Spark benchmark,
+  signed build-provenance attestations for release artifacts, and Lambda
+  duration/concurrency alarms.
+
+### Changed
+
+- Spark and other engines evaluate configured range rules in one batched
+  aggregate instead of one scan per column.
+- LLM reports retain the resolved managed provider/model, treat report content
+  as untrusted, and label generated narratives as advisory.
+- Record consolidation now rejects warning linkage fits unless explicitly
+  enabled after validation.
+- NER audits include the spaCy runtime and model license metadata, and unknown
+  label filters now fail instead of silently returning no entities.
+
+### Fixed
+
+- Warm Lambda invocations reuse the S3 SDK client and connection pool.
+
 ## [3.3.0] - 2026-09-02
 
 ### Added

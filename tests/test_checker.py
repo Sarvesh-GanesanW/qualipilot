@@ -10,6 +10,7 @@ import pytest
 
 from qualipilot import DataQualityChecker, QualipilotConfig
 from qualipilot.checker import (
+    _LLM_SECURITY_INSTRUCTION,
     _build_llm_prompt,
     _summarise_payload,
     config_fingerprint,
@@ -206,6 +207,9 @@ def test_gz_llm_report_records_resolved_provider(
     assert report.llm_status == "completed"
     assert report.llm_provider == "openai"
     assert report.llm_model == "gpt-test"
+    system = provider.generate.call_args.kwargs["system"]
+    assert system.startswith(_LLM_SECURITY_INSTRUCTION)
+    assert config.llm.system_prompt in system
 
 
 def test_llm_summary_keeps_findings_but_removes_samples() -> None:

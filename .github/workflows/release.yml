@@ -13,7 +13,10 @@ jobs:
     timeout-minutes: 20
     permissions:
       actions: read
+      artifact-metadata: write
+      attestations: write
       contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -58,6 +61,10 @@ jobs:
       - run: uv run pytest -q
       - run: uv build --clear
       - run: uv run twine check dist/*
+      - name: attest release distributions
+        uses: actions/attest-build-provenance@96278af6caaf10aea03fd8d33a09a777ca52d62f # v3.2.0
+        with:
+          subject-path: dist/*
       - name: smoke-test release wheel
         run: |
           uv venv "$RUNNER_TEMP/wheel-smoke"

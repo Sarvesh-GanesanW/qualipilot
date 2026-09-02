@@ -195,6 +195,10 @@ must require the audit and verify `consolidation.output.sha256` before using
 the data; this also detects a process or host failure between the two file
 replacements.
 
+The audit contains record identifiers, matched pairs, cluster membership,
+lineage, and conflict-source identifiers. Treat it and the consolidated data
+as sensitive as the input, with explicit access and retention controls.
+
 ## Pipeline integration
 
 Set `CheckConfig.linkage` inside your normal quality config and the
@@ -230,6 +234,10 @@ any probable-duplicate cluster is found. A rejected linkage fit has severity
 - Blocking determines both recall and resource use. Low-cardinality rules
   can create a near-cartesian candidate set. Inspect candidate counts on a
   sample before increasing `max_pairs_hard_cap`.
+- Blocking also changes the population used to fit comparison weights. Reusing
+  a blocking field as a comparison can invert its learned agreement ordering;
+  inspect fit diagnostics and labeled metrics rather than adding fields by
+  intuition.
 - The default hard cap is 50 million candidate pairs. That is a guardrail,
   not a memory guarantee; choose a lower cap for constrained workers.
 - EM output and probability thresholds are not automatically calibrated to
@@ -242,8 +250,10 @@ any probable-duplicate cluster is found. A rejected linkage fit has severity
   candidate probabilities are set to zero, its dedupe clusters remain
   singletons, and `RecordLinker.deduplicate()` refuses consolidation. A fit
   that reaches the iteration limit but passes those safety checks is scored
-  with `fit.status == "warning"`; inspect `fit.warnings`, `converged`, and
-  `max_parameter_delta` before production use.
+  with `fit.status == "warning"`. Consolidation refuses that fit by default;
+  inspect `fit.warnings`, `converged`, and `max_parameter_delta`, then set
+  `allow_warning_fit=True` (or CLI `--allow-warning-fit`) only when labeled
+  evaluation supports the decision.
 - Connected components are transitive: if A matches B and B matches C, all
   three records share a cluster even when A-C is below threshold.
 - Use `scripts/bench_linking.py --n <rows>` on representative hardware and

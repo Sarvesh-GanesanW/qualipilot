@@ -390,7 +390,8 @@ def _print_summary(report: QualityReport) -> None:
         )
     console.print(table)
     if report.llm_report:
-        console.rule("LLM Findings")
+        console.rule("LLM Findings (advisory)")
+        console.print("Validate this output before acting.", style="dim")
         console.print(report.llm_report, markup=False)
     elif report.llm_error:
         console.print(
@@ -686,6 +687,16 @@ def link_command(
             ),
         ),
     ] = None,
+    allow_warning_fit: Annotated[
+        bool,
+        typer.Option(
+            "--allow-warning-fit",
+            help=(
+                "Allow consolidation after a non-converged but otherwise "
+                "usable linkage fit."
+            ),
+        ),
+    ] = False,
 ) -> None:
     """Find duplicate records and optionally consolidate each cluster."""
     from qualipilot.linking import (
@@ -705,6 +716,7 @@ def link_command(
         block=block or [],
         threshold=threshold,
         normalize_strings=normalize_strings,
+        allow_warning_fit=allow_warning_fit,
     )
 
     linker = RecordLinker(df, cfg)
@@ -828,6 +840,7 @@ def _build_link_config(
     block: list[str],
     threshold: float,
     normalize_strings: bool,
+    allow_warning_fit: bool,
 ) -> Any:
     from qualipilot.linking import (
         LinkConfig,
@@ -857,6 +870,7 @@ def _build_link_config(
             blocking_rules=blocking_rules,
             normalization=normalization,
             match_threshold_probability=threshold,
+            allow_warning_fit=allow_warning_fit,
         )
     except ValueError as exc:
         raise typer.BadParameter(

@@ -128,6 +128,8 @@ def test_markdown_escapes_untrusted_cells_and_html() -> None:
             "[external](https://example.com)\n# forged heading"
         ),
         llm_status="completed",
+        llm_provider="openai",
+        llm_model="example-model",
     )
 
     markdown = render_markdown(report)
@@ -139,6 +141,13 @@ def test_markdown_escapes_untrusted_cells_and_html() -> None:
     assert "    &lt;details open&gt;" in markdown
     assert "    [external](https://example.com)" in markdown
     assert "    # forged heading" in markdown
+    assert "AI-generated advisory; validate before acting" in markdown
+    assert "`openai`" in markdown
+    assert "`example-model`" in markdown
+
+    rendered_html = render_html(report)
+    assert "AI-generated advisory" in rendered_html
+    assert "openai / example-model" in rendered_html
 
 
 def test_html_surfaces_escaped_execution_errors() -> None:

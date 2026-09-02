@@ -63,6 +63,16 @@ run "valid_defaults" {
     )
     error_message = "The default typed configuration must reach Lambda as valid JSON."
   }
+
+  assert {
+    condition = (
+      aws_cloudwatch_metric_alarm.lambda_duration[0].metric_name == "Duration"
+      && aws_cloudwatch_metric_alarm.lambda_duration[0].threshold == 240000
+      && aws_cloudwatch_metric_alarm.lambda_concurrency[0].metric_name == "ConcurrentExecutions"
+      && aws_cloudwatch_metric_alarm.lambda_concurrency[0].threshold == 4
+    )
+    error_message = "Lambda duration and concurrency alarms must track configured limits."
+  }
 }
 
 run "accept_global_inference_profile_model" {

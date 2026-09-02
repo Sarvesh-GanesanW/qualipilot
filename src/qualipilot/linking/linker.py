@@ -378,6 +378,17 @@ class RecordLinker:
                 "cannot consolidate records with a rejected linkage fit: "
                 f"{fit.get('reason', 'unsafe model parameters')}"
             )
+        if (
+            isinstance(fit, dict)
+            and fit.get("status") == "warning"
+            and not self.config.allow_warning_fit
+        ):
+            warnings = "; ".join(str(item) for item in fit.get("warnings", []))
+            raise ValueError(
+                "cannot consolidate records with a warning linkage fit: "
+                f"{warnings or 'review fit diagnostics'}; set "
+                "allow_warning_fit=True only after validation"
+            )
         return DeduplicationResult(
             linkage=linkage,
             consolidation=consolidate_records(
