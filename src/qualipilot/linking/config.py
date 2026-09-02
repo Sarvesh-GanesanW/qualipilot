@@ -81,7 +81,7 @@ class LinkConfig(BaseModel):
     )
     match_threshold_probability: float = Field(default=0.9, ge=0.5, lt=1.0)
 
-    em_max_iter: int = Field(default=15, ge=1, le=200)
+    em_max_iter: int = Field(default=100, ge=1, le=200)
     em_tolerance: float = Field(default=1e-3, gt=0)
     allow_warning_fit: bool = False
 

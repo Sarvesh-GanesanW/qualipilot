@@ -14,6 +14,7 @@ from qualipilot.checker import (
     _build_llm_prompt,
     _summarise_payload,
     config_fingerprint,
+    write_text_atomic,
 )
 from qualipilot.models.config import CheckConfig, ColumnRange, LLMConfig
 from qualipilot.models.results import CheckResult, DatasetStats, QualityReport
@@ -45,6 +46,26 @@ def test_save_writes_json(tmp_path: Path, dirty_pandas: pd.DataFrame) -> None:
     cfg = QualipilotConfig(output_path=tmp_path / "out.json")
     DataQualityChecker(dirty_pandas, cfg).run()
     assert (tmp_path / "out.json").exists()
+
+
+def test_interrupted_atomic_write_preserves_previous_output(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output = tmp_path / "report.json"
+    output.write_text("previous", encoding="utf-8")
+
+    def interrupt_replace(source: Path, target: Path) -> None:
+        _ = source, target
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr("qualipilot.checker.os.replace", interrupt_replace)
+
+    with pytest.raises(KeyboardInterrupt):
+        write_text_atomic(output, "replacement")
+
+    assert output.read_text(encoding="utf-8") == "previous"
+    assert list(tmp_path.iterdir()) == [output]
 
 
 def test_configured_markdown_output_is_honoured(

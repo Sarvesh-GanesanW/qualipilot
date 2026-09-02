@@ -43,6 +43,9 @@ from qualipilot.linking import (
 )
 from qualipilot.linking.config import Backend
 
+if not __debug__:  # pragma: no cover - fail closed under python -O.
+    raise RuntimeError("benchmark gates require assertions")
+
 PAIR_CAP = 3_000_000
 MEM_BUDGET_MB = 6_000
 DEFAULT_TRIALS = 3

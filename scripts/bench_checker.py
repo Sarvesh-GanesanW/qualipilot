@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import gc
 import json
+import math
 import os
 import platform
 import statistics
@@ -24,6 +25,9 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from time import perf_counter
 from typing import Any
+
+if not __debug__:  # pragma: no cover - fail closed under python -O.
+    raise RuntimeError("benchmark gates require assertions")
 
 ENGINES = ("pandas", "polars", "duckdb", "dask", "spark")
 RANGE_SPECS = {
@@ -50,6 +54,13 @@ def _positive_int(value: str) -> int:
     return parsed
 
 
+def _positive_float(value: str) -> float:
+    parsed = float(value)
+    if not math.isfinite(parsed) or parsed <= 0:
+        raise argparse.ArgumentTypeError("must be a positive finite number")
+    return parsed
+
+
 def _arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--engine", choices=ENGINES, required=True)
@@ -60,6 +71,24 @@ def _arguments() -> argparse.Namespace:
     parser.add_argument("--partitions", type=_positive_int, default=64)
     parser.add_argument("--threads", type=_positive_int, default=8)
     parser.add_argument("--trials", type=_positive_int, default=5)
+    parser.add_argument(
+        "--max-trial-slowdown",
+        type=_positive_float,
+        help="fail if the slowest measured trial exceeds this median multiple",
+    )
+    parser.add_argument(
+        "--max-process-hwm-mib",
+        type=_positive_float,
+        help=(
+            "fail if an observed Python or Spark JVM high-water mark "
+            "exceeds this"
+        ),
+    )
+    parser.add_argument(
+        "--max-hwm-growth-mib",
+        type=_positive_float,
+        help="fail if a process high-water mark grows this much after warmup",
+    )
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     if args.rows is None:
@@ -424,13 +453,16 @@ def _validate(report: Any, args: argparse.Namespace) -> None:
 
 
 def _run_once(
-    checker: Any, args: argparse.Namespace, label: str
+    checker: Any,
+    args: argparse.Namespace,
+    label: str,
+    spark_jvm_pid: int | None,
 ) -> dict[str, Any]:
     started = perf_counter()
     report = checker.run(include_llm=False)
     elapsed = perf_counter() - started
     _validate(report, args)
-    return {
+    result = {
         "label": label,
         "quality_wall_seconds": round(elapsed, 6),
         "logical_rows_per_second": round(args.rows / elapsed),
@@ -440,7 +472,11 @@ def _run_once(
         },
         "severities": {item.name: item.severity for item in report.results},
         "range_violation_counts": _range_counts(report),
+        "python_memory": _proc_status(os.getpid()),
     }
+    if spark_jvm_pid is not None:
+        result["spark_jvm_memory"] = _proc_status(spark_jvm_pid)
+    return result
 
 
 def _proc_status(pid: int | None) -> dict[str, str]:
@@ -461,6 +497,115 @@ def _proc_status(pid: int | None) -> dict[str, str]:
         for key, value in [line.split(":", maxsplit=1)]
         if key in wanted
     }
+
+
+def _memory_kib(run: dict[str, Any], key: str, field: str) -> int | None:
+    value = run.get(key, {}).get(field)
+    if value is None:
+        return None
+    amount, unit = value.split()
+    if unit != "kB":
+        raise RuntimeError(f"unexpected /proc memory unit: {unit}")
+    return int(amount)
+
+
+def _memory_metrics(runs: list[dict[str, Any]]) -> dict[str, Any]:
+    metrics = {}
+    for label, key in (
+        ("python", "python_memory"),
+        ("spark_jvm", "spark_jvm_memory"),
+    ):
+        high_water = [_memory_kib(run, key, "VmHWM") for run in runs]
+        rss = [_memory_kib(run, key, "VmRSS") for run in runs]
+        if not any(value is not None for value in high_water):
+            continue
+        if any(value is None for value in [*high_water, *rss]):
+            raise RuntimeError(f"incomplete {label} memory evidence")
+        measured_hwm = [value for value in high_water if value is not None]
+        measured_rss = [value for value in rss if value is not None]
+        metrics[label] = {
+            "peak_hwm_mib": round(max(measured_hwm) / 1024, 3),
+            "hwm_growth_after_warmup_mib": round(
+                (max(measured_hwm) - measured_hwm[0]) / 1024,
+                3,
+            ),
+            "rss_change_after_warmup_mib": round(
+                (measured_rss[-1] - measured_rss[0]) / 1024,
+                3,
+            ),
+        }
+    return metrics
+
+
+def _validate_resilience(
+    args: argparse.Namespace,
+    walls: list[float],
+    memory: dict[str, Any],
+) -> dict[str, Any]:
+    slowdown = max(walls) / statistics.median(walls)
+    limits = {
+        "max_trial_slowdown": args.max_trial_slowdown,
+        "max_process_hwm_mib": args.max_process_hwm_mib,
+        "max_hwm_growth_mib": args.max_hwm_growth_mib,
+    }
+    failures = []
+    if (
+        args.max_trial_slowdown is not None
+        and slowdown > args.max_trial_slowdown
+    ):
+        failures.append(
+            f"trial slowdown {slowdown:.3f} exceeds "
+            f"{args.max_trial_slowdown:.3f}"
+        )
+    failures.extend(_memory_failures(args, memory))
+    if failures:
+        raise RuntimeError("resilience gate failed: " + "; ".join(failures))
+    return {
+        "status": "PASS",
+        "trial_max_to_median": round(slowdown, 6),
+        "process_memory": memory,
+        "limits": limits,
+        "memory_scope": "per process; not aggregate host or cgroup memory",
+    }
+
+
+def _memory_failures(
+    args: argparse.Namespace, memory: dict[str, Any]
+) -> list[str]:
+    failures = []
+    memory_limit_requested = any(
+        limit is not None
+        for limit in (args.max_process_hwm_mib, args.max_hwm_growth_mib)
+    )
+    required_memory = {"python"}
+    if args.engine == "spark":
+        required_memory.add("spark_jvm")
+    missing_memory = required_memory - memory.keys()
+    if memory_limit_requested and missing_memory:
+        failures.append(
+            "process memory evidence is unavailable for "
+            + ", ".join(sorted(missing_memory))
+        )
+    for process, observed in memory.items():
+        peak = observed["peak_hwm_mib"]
+        growth = observed["hwm_growth_after_warmup_mib"]
+        if (
+            args.max_process_hwm_mib is not None
+            and peak > args.max_process_hwm_mib
+        ):
+            failures.append(
+                f"{process} HWM {peak:.3f} MiB exceeds "
+                f"{args.max_process_hwm_mib:.3f} MiB"
+            )
+        if (
+            args.max_hwm_growth_mib is not None
+            and growth > args.max_hwm_growth_mib
+        ):
+            failures.append(
+                f"{process} HWM growth {growth:.3f} MiB exceeds "
+                f"{args.max_hwm_growth_mib:.3f} MiB"
+            )
+    return failures
 
 
 def _host_info() -> dict[str, Any]:
@@ -637,14 +782,34 @@ def main() -> None:
         spark_session=owner if args.engine == "spark" else None,
     )
     checker_init_seconds = perf_counter() - checker_started
+    gateway = (
+        getattr(owner.sparkContext._gateway, "proc", None)
+        if args.engine == "spark"
+        else None
+    )
+    spark_jvm_pid = getattr(gateway, "pid", None)
     try:
         gc.collect()
-        cold = _run_once(checker, args, "cold")
-        warmup = _run_once(checker, args, "warmup")
-        trials = [
-            _run_once(checker, args, f"trial-{index}")
-            for index in range(1, args.trials + 1)
-        ]
+        cold = _run_once(checker, args, "cold", spark_jvm_pid)
+        warmup = _run_once(checker, args, "warmup", spark_jvm_pid)
+        trials = []
+        for index in range(1, args.trials + 1):
+            trials.append(
+                _run_once(
+                    checker,
+                    args,
+                    f"trial-{index}",
+                    spark_jvm_pid,
+                )
+            )
+            memory_failures = _memory_failures(
+                args,
+                _memory_metrics([warmup, *trials]),
+            )
+            if memory_failures:
+                raise RuntimeError(
+                    "resilience gate failed: " + "; ".join(memory_failures)
+                )
         walls = [trial["quality_wall_seconds"] for trial in trials]
         names = list(trials[0]["check_seconds"])
         medians = {
@@ -656,11 +821,8 @@ def main() -> None:
             )
             for name in names
         }
-        gateway = (
-            getattr(owner.sparkContext._gateway, "proc", None)
-            if args.engine == "spark"
-            else None
-        )
+        memory = _memory_metrics([warmup, *trials])
+        resilience = _validate_resilience(args, walls, memory)
         runtime_shape = _runtime_shape(
             args.engine,
             frame,
@@ -720,12 +882,14 @@ def main() -> None:
                 "actual_range_violation_counts": trials[-1][
                     "range_violation_counts"
                 ],
+                "resilience": resilience,
             },
         }
         rendered = json.dumps(result, indent=2, sort_keys=True)
         if args.output is not None:
-            args.output.parent.mkdir(parents=True, exist_ok=True)
-            args.output.write_text(rendered + "\n", encoding="utf-8")
+            from qualipilot.checker import write_text_atomic
+
+            write_text_atomic(args.output, rendered + "\n")
         print(rendered)
     finally:
         _cleanup(args.engine, checker, owner)

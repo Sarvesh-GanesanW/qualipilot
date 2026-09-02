@@ -34,6 +34,13 @@ jobs:
       - run: uv run ruff check .
       - run: uv run ruff format --check .
       - run: uv run mypy src/qualipilot
+      - name: type-check assurance drivers
+        run: >-
+          uv run mypy --explicit-package-bases
+          scripts/bench_checker.py scripts/bench_distributed.py
+          scripts/bench_lambda.py scripts/bench_linking.py
+          scripts/bench_ner.py scripts/bench_spark.py
+          scripts/check_lambda_container.py
 
   test:
     runs-on: ${{ matrix.os }}
@@ -63,6 +70,31 @@ jobs:
           --extra ollama
           --extra openai
       - run: uv run pytest -q
+      - name: persisted Dask multiprocessing gate
+        if: matrix.os == 'ubuntu-24.04' && matrix.python-version == '3.12'
+        run: >-
+          uv run python scripts/bench_distributed.py
+          --engine dask --rows 100000 --partitions 8 --workers 2
+          --output "$RUNNER_TEMP/distributed-dask.json"
+      - name: repeated-run memory gates
+        if: matrix.os == 'ubuntu-24.04' && matrix.python-version == '3.12'
+        run: |
+          for engine in pandas polars duckdb dask; do
+            uv run python scripts/bench_checker.py \
+              --engine "$engine" --profile full --rows 100000 \
+              --partitions 8 --threads 2 --trials 30 \
+              --max-process-hwm-mib 2048 --max-hwm-growth-mib 512 \
+              --output "$RUNNER_TEMP/soak-$engine.json"
+          done
+      - name: upload Dask and resilience evidence
+        if: always() && matrix.os == 'ubuntu-24.04' && matrix.python-version == '3.12'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: quality-gates
+          path: |
+            ${{ runner.temp }}/distributed-dask.json
+            ${{ runner.temp }}/soak-*.json
+          if-no-files-found: warn
       - name: upload coverage
         if: matrix.os == 'ubuntu-24.04' && matrix.python-version == '3.12'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -155,9 +187,58 @@ jobs:
       - run: uv pip install --python .venv/bin/python "pyspark==${{ matrix.pyspark }}"
       - run: java -version
       - run: uv run --no-sync pytest -q tests/test_spark_engine.py --no-cov
+      - name: persisted Spark standalone-worker gate
+        run: >-
+          uv run --no-sync python scripts/bench_distributed.py
+          --engine spark --rows 100000 --partitions 8 --workers 2
+          --output "$RUNNER_TEMP/distributed-spark.json"
+      - name: repeated-run Spark memory gate
+        run: >-
+          uv run --no-sync python scripts/bench_checker.py
+          --engine spark --profile full --rows 100000
+          --partitions 8 --threads 2 --trials 30
+          --max-process-hwm-mib 4096 --max-hwm-growth-mib 2048
+          --output "$RUNNER_TEMP/soak-spark.json"
+      - name: upload Spark evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: spark-${{ matrix.pyspark }}-gates
+          path: |
+            ${{ runner.temp }}/distributed-spark.json
+            ${{ runner.temp }}/soak-spark.json
+          if-no-files-found: warn
+
+  ner-quality:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9 # v7
+        with:
+          version: "0.11.21"
+          enable-cache: true
+      - run: uv sync --locked --extra ner
+      - name: install pinned spaCy model
+        run: >-
+          uv pip install --python .venv/bin/python
+          "https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl#sha256=1932429db727d4bff3deed6b34cfc05df17794f4a52eeb26cf8928f7c1a0fb85"
+      - name: pinned Few-NERD quality gate
+        run: >-
+          uv run --no-sync python scripts/bench_ner.py
+          --trials 1 --output "$RUNNER_TEMP/ner-quality.json"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: ner-quality
+          path: ${{ runner.temp }}/ner-quality.json
+          if-no-files-found: warn
 
   build:
-    needs: [lint, test, config, minimums, spark]
+    needs: [lint, test, config, minimums, spark, ner-quality]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -193,6 +274,7 @@ jobs:
         with:
           context: .
           file: docker/Dockerfile
+          build-args: VCS_REF=${{ github.sha }}
           load: true
           tags: qualipilot:ci
       - run: docker run --rm qualipilot:ci --version
@@ -208,6 +290,7 @@ jobs:
         with:
           context: .
           file: docker/Dockerfile.lambda
+          build-args: VCS_REF=${{ github.sha }}
           load: true
           tags: qualipilot-lambda:ci
       - name: smoke-test lambda imports
@@ -216,7 +299,21 @@ jobs:
           --entrypoint /var/lang/bin/python3.12
           qualipilot-lambda:ci
           -c "import qualipilot.lambda_handler"
+      - name: Lambda RIE and S3-contract gate
+        run: >-
+          python3 scripts/check_lambda_container.py
+          --image qualipilot-lambda:ci
+          --expected-revision "${{ github.sha }}"
+          --output "$RUNNER_TEMP/lambda-rie.json"
+      - name: upload Lambda RIE evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: lambda-rie
+          path: ${{ runner.temp }}/lambda-rie.json
+          if-no-files-found: warn
       - name: scan lambda image
+        if: always()
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: qualipilot-lambda:ci

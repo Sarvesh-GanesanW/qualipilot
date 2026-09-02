@@ -51,15 +51,43 @@ def test_extracts_stable_character_offsets(ner_model: Path) -> None:
     assert all(
         text[item.start_char : item.end_char] == item.text for item in entities
     )
-    assert recognizer.metadata == {
+    metadata = recognizer.metadata
+    artifact_sha256 = metadata.pop("artifact_sha256")
+    assert len(artifact_sha256) == 64
+    assert recognizer.metadata["artifact_sha256"] == artifact_sha256
+    assert metadata == {
         "source": str(ner_model),
         "spacy_version": version("spacy"),
         "name": "qualipilot_test_ner",
         "version": "1.2.3",
+        "artifact_sha256_scope": (
+            "model-tree files excluding __pycache__ and .pyc"
+        ),
         "license": "unknown",
         "language": "en",
         "pipeline": ["entity_ruler"],
     }
+
+
+def test_enforces_pipeline_version_and_artifact_hash(
+    ner_model: Path,
+) -> None:
+    recognizer = SpacyEntityRecognizer(ner_model)
+    artifact_sha256 = str(recognizer.metadata["artifact_sha256"])
+
+    verified = SpacyEntityRecognizer(
+        ner_model,
+        expected_version="1.2.3",
+        expected_sha256=artifact_sha256.upper(),
+    )
+
+    assert verified.metadata["artifact_sha256"] == artifact_sha256
+    with pytest.raises(ValueError, match=r"version.*does not match"):
+        SpacyEntityRecognizer(ner_model, expected_version="9.9.9")
+    with pytest.raises(ValueError, match=r"SHA-256.*does not match"):
+        SpacyEntityRecognizer(ner_model, expected_sha256="0" * 64)
+    with pytest.raises(ValueError, match="64-character hex digest"):
+        SpacyEntityRecognizer(ner_model, expected_sha256="not-a-digest")
 
 
 def test_batches_and_filters_labels(ner_model: Path) -> None:
@@ -103,6 +131,9 @@ def test_ner_cli_writes_reproducible_audit(
         'id,note\nr1,"OpenAI is in Pune"\nr2,\nr3,"Ada Lovelace"\n',
         encoding="utf-8",
     )
+    model_sha256 = str(
+        SpacyEntityRecognizer(ner_model).metadata["artifact_sha256"]
+    )
 
     result = runner.invoke(
         app,
@@ -115,6 +146,10 @@ def test_ner_cli_writes_reproducible_audit(
             "id",
             "--model",
             str(ner_model),
+            "--expected-model-version",
+            "1.2.3",
+            "--expected-model-sha256",
+            model_sha256,
             "--output",
             str(output_path),
         ],
@@ -127,6 +162,7 @@ def test_ner_cli_writes_reproducible_audit(
         == hashlib.sha256(input_path.read_bytes()).hexdigest()
     )
     assert payload["model"]["version"] == "1.2.3"
+    assert payload["model"]["artifact_sha256"] == model_sha256
     assert payload["label_filter"] is None
     assert payload["summary"] == {
         "rows": 3,
@@ -153,6 +189,30 @@ def test_ner_cli_writes_reproducible_audit(
         }
         for entity in payload["entities"]
     )
+
+
+def test_ner_cli_rejects_unpinned_model_content(
+    tmp_path: Path, ner_model: Path
+) -> None:
+    input_path = tmp_path / "notes.csv"
+    input_path.write_text("note\nOpenAI\n", encoding="utf-8")
+
+    result = runner.invoke(
+        app,
+        [
+            "ner",
+            str(input_path),
+            "--text",
+            "note",
+            "--model",
+            str(ner_model),
+            "--expected-model-sha256",
+            "0" * 64,
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert "artifact SHA-256" in result.output
 
 
 @pytest.mark.parametrize(

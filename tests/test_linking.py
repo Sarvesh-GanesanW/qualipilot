@@ -23,7 +23,11 @@ from qualipilot.linking.blocking import (
     estimate_candidate_pair_upper_bound,
 )
 from qualipilot.linking.cluster import cluster_from_pairs
-from qualipilot.linking.em import estimate_parameters, score_pairs
+from qualipilot.linking.em import (
+    build_fit_diagnostics,
+    estimate_parameters,
+    score_pairs,
+)
 from qualipilot.linking.linker import LinkageResult
 
 
@@ -400,6 +404,73 @@ def test_em_smooths_learned_and_scored_probabilities() -> None:
         0.5,
     )
     assert 0.0 < extreme_scores[0] < 1.0
+
+
+@pytest.mark.parametrize(
+    "joint_counts",
+    # Joint comparison-level counts from the deterministic linkage benchmark.
+    [
+        (
+            ((1, 2, 1), 3_864),
+            ((1, 2, 2), 147),
+            ((1, 2, 3), 72),
+            ((2, 2, 3), 3),
+            ((3, 2, 3), 47),
+        ),
+        (
+            ((1, 2, 1), 138_947),
+            ((1, 2, 2), 5_263),
+            ((1, 2, 3), 2_684),
+            ((2, 2, 1), 1),
+            ((2, 2, 3), 14),
+            ((3, 2, 3), 236),
+        ),
+    ],
+    ids=["5k-benchmark", "25k-benchmark"],
+)
+def test_default_em_budget_converges_on_benchmark_distributions(
+    joint_counts: tuple[tuple[tuple[int, int, int], int], ...],
+) -> None:
+    patterns = np.array(
+        [pattern for pattern, _ in joint_counts], dtype=np.uint8
+    )
+    levels = np.repeat(
+        patterns,
+        [count for _, count in joint_counts],
+        axis=0,
+    )
+    config = LinkConfig(
+        unique_id_column="id",
+        comparisons=[
+            FuzzyString(column="name", thresholds=(0.92, 0.75)),
+            ExactMatch(column="postcode"),
+            NumericDiff(column="dob", thresholds=(0.0, 1.0)),
+        ],
+    )
+    n_levels = np.array(
+        [comparison.levels for comparison in config.comparisons],
+        dtype=np.uint8,
+    )
+
+    params = estimate_parameters(
+        levels,
+        n_levels,
+        prior=config.prior_match_probability,
+        max_iter=config.em_max_iter,
+        tol=config.em_tolerance,
+    )
+    fit = build_fit_diagnostics(
+        params,
+        n_levels,
+        [comparison.column for comparison in config.comparisons],
+        sampled_pair_count=len(levels),
+        candidate_pair_count=len(levels),
+    )
+
+    assert params["fit_state"]["converged"] is True
+    assert 15 < params["fit_state"]["iterations"] <= config.em_max_iter
+    assert params["fit_state"]["max_parameter_delta"] < config.em_tolerance
+    assert fit["status"] == "ok"
 
 
 @pytest.mark.parametrize(

@@ -433,6 +433,23 @@ def ner_command(
             help="Installed spaCy pipeline package name or local path.",
         ),
     ],
+    expected_model_version: Annotated[
+        str | None,
+        typer.Option(
+            "--expected-model-version",
+            help="Reject a pipeline whose declared version differs.",
+        ),
+    ] = None,
+    expected_model_sha256: Annotated[
+        str | None,
+        typer.Option(
+            "--expected-model-sha256",
+            help=(
+                "Reject a pipeline whose installed source/data tree SHA-256 "
+                "differs; Python bytecode caches are excluded."
+            ),
+        ),
+    ] = None,
     id_column: Annotated[
         str | None,
         typer.Option(
@@ -484,9 +501,16 @@ def ner_command(
             labels=label,
             batch_size=batch_size,
             n_process=processes,
+            expected_version=expected_model_version,
+            expected_sha256=expected_model_sha256,
         )
     except (RuntimeError, ValueError) as exc:
-        raise typer.BadParameter(str(exc), param_hint="--model") from exc
+        raise typer.BadParameter(
+            str(exc),
+            param_hint=(
+                "--model/--expected-model-version/--expected-model-sha256"
+            ),
+        ) from exc
 
     id_values = (
         frame.get_column(id_column).to_list()

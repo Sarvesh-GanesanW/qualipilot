@@ -23,6 +23,9 @@ from shutil import copyfile
 from time import perf_counter
 from typing import Any
 
+if not __debug__:  # pragma: no cover - fail closed under python -O.
+    raise RuntimeError("benchmark gates require assertions")
+
 
 class _S3Error(Exception):
     def __init__(self, code: str) -> None:

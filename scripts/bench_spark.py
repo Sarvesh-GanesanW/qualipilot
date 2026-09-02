@@ -31,6 +31,9 @@ from pyspark.sql import functions as F
 from qualipilot import CheckConfig, DataQualityChecker, QualipilotConfig
 from qualipilot.models.config import ColumnRange
 
+if not __debug__:  # pragma: no cover - fail closed under python -O.
+    raise RuntimeError("benchmark gates require assertions")
+
 DEFAULT_ROWS = 100_000_000
 DEFAULT_PARTITIONS = 64
 DEFAULT_TRIALS = 5
@@ -319,6 +322,9 @@ def main() -> None:
         benchmark = _benchmark(args, spark)
         gateway_process = getattr(spark.sparkContext._gateway, "proc", None)
         gateway_pid = getattr(gateway_process, "pid", None)
+        jvm = spark.sparkContext._jvm
+        if jvm is None:
+            raise RuntimeError("Spark JVM bridge is unavailable")
         output = {
             "benchmark": "qualipilot Spark batched range checks",
             "recorded_at": datetime.now(UTC).isoformat(),
@@ -328,9 +334,7 @@ def main() -> None:
                 "qualipilot": version("qualipilot"),
                 "pyspark": version("pyspark"),
                 "spark": spark.version,
-                "java": spark.sparkContext._jvm.java.lang.System.getProperty(
-                    "java.version"
-                ),
+                "java": jvm.java.lang.System.getProperty("java.version"),
                 "platform": platform.platform(),
                 "conda_prefix": os.environ.get("CONDA_PREFIX"),
                 "git": _git_info(),
