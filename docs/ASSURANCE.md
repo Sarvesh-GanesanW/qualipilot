@@ -25,11 +25,12 @@ The statuses below mean:
 | Feature | Baseline | Status | Implemented evidence | Required production evidence |
 |---|---|---|---|---|
 | Data-quality checks | ISO/IEC 25012 | Partial | Typed contracts, missing values, exact duplicates, dtypes, ranges, IQR outliers, cardinality, freshness, portable result schema | Business definitions, rule owners, thresholds, source truth, referential/cross-field rules, and acceptance criteria |
-| Polars, Pandas, DuckDB, Dask, Spark | Portability and efficiency | Partial | Common engine contract, portable dtype families, parity tests, batched distributed aggregates, recorded benchmarks | Representative formats, schemas, distributions, cluster sizing, and service objectives |
+| Polars, Pandas, DuckDB, Dask, Spark | Portability and efficiency | Partial | Common engine contract, portable dtype families, parity tests, generated-source benchmarks, persisted 100-million-row single-host Dask-process and Spark-standalone gates, and repeated-run per-process memory gates | Representative formats and distributions, multi-host/shared-storage execution, aggregate worker and cgroup memory, fault injection, capacity limits, and service objectives |
 | LLM narrative | OWASP LLM Top 10; NIST AI 600-1 | Partial | Default off, minimized bounded prompt, fixed untrusted-data instruction, escaped built-in sinks, no tools or agency, advisory label, provider/model provenance | Approved provider and data region, adversarial evaluation, factuality review, rate/spend limits, and incident ownership |
-| Record linkage and consolidation | Statistical evaluation and traceability | Partial | Pair caps, deterministic sampling, fit diagnostics, unsafe-fit rejection, warning-fit consolidation gate, source/config/output hashes, lineage, precision/recall/F1 API | Representative labeled holdout, threshold calibration, subgroup analysis, drift monitoring, and human review of ambiguous pairs |
-| Named-entity recognition | Model evaluation and provenance | Partial | Explicit pipeline loading, label validation, stable offsets, batching, text limits, spaCy/model metadata, input hash | Pinned model artifact hash, domain/language holdout, per-label and subgroup metrics, drift and model-change gates |
-| Lambda operations | AWS Lambda best practices | Partial | Reused SDK client, immutable image digest, least-privilege IAM, encryption, version/ETag binding, idempotency, input limits, failure destination, metrics and alarms | Live IAM/encryption verification, representative load test, alarm exercise, replay test, backup restore, RTO and RPO |
+| Record linkage and consolidation | Statistical evaluation and traceability | Partial | Pair caps, deterministic sampling, fit diagnostics, unsafe-fit rejection, warning-fit consolidation gate, source/config/output hashes, lineage, labeled metrics, and focused convergence regressions for the benchmark distributions | Representative labeled holdout, threshold calibration, subgroup analysis, drift monitoring, convergence review on production distributions, and human review of ambiguous pairs |
+| Named-entity recognition | Model evaluation and provenance | Partial | Explicit pipeline loading, version and source/data-tree drift pins, label validation, stable offsets, batching, text limits, pinned Few-NERD distribution/selection hashes, and exact-span aggregate/per-label regression floors | Signed or attested model distribution, domain/language holdout, deployment-owned per-label/subgroup thresholds, drift monitoring, and model-change gates |
+| Lambda operations | AWS Lambda best practices | Partial | Reused SDK client, immutable image digest, least-privilege infrastructure, version/ETag binding, idempotency, input limits, metrics/alarms, and a local actual-image RIE/MinIO gate covering boto3 transfer, AES256 request metadata, cache reuse, revision labels, and rejection under Docker limits | Live AWS IAM, S3/KMS/TLS, concurrency, cold-start/load, destination/alarm, replay, restore, RTO, and RPO evidence |
+| Runtime resilience | Efficiency and recoverability | Partial | Per-trial correctness, 30-run timing observations, configurable per-process high-water-memory acceptance thresholds, atomic local outputs, injected failure/retry tests, and bounded Lambda input/container resources | Aggregate/cgroup and distributed-worker memory, long-duration leak tests, kernel OOM and worker-loss injection, remote-storage interruption, recovery objectives, and capacity planning |
 | Release supply chain | SLSA v1.2 Build track | Build L2 provenance verified for v3.4.0 wheel and sdist | Locked dependencies, full-SHA Actions pins, CI gates, CodeQL, dependency/container scans, PyPI trusted publishing, and GitHub-hosted signed provenance tied to tag `v3.4.0` and commit `a1bc30a` | Consumers should verify downloaded artifacts; no Build L3 or SLSA Source-level claim is made |
 
 ## ISO/IEC 25012 data-quality characteristics
@@ -48,7 +49,7 @@ itself establish that a dataset is fit for a particular business or legal use.
 | Accessibility | Partial | Typed JSON plus HTML, Markdown, CLI, and Python APIs; no claim of formal accessibility conformance |
 | Compliance | External/partial | Rules can encode requirements, but Qualipilot supplies no legislation- or sector-specific rule pack |
 | Confidentiality | Partial | Samples and top values default off; LLM prompts omit paths, versions, errors, samples, and top values; metadata and reports can still be sensitive |
-| Efficiency | Partial | Batched range, cardinality, null, and quantile operations plus distributed engines; workload sizing remains external |
+| Efficiency | Partial | Batched aggregates, five engines, 100-million-row generated and persisted single-host exercises, and repeated-run per-process memory sentinels; multi-host capacity and aggregate-resource sizing remain external |
 | Precision | Partial | Exact versus approximate quantile provenance is reported; no universal measurement-uncertainty model |
 | Traceability | Partial | Schema/package/time/source/config/provider/model provenance, durations, linkage lineage, and content hashes |
 | Understandability | Partial | Structured results and human renderers; business glossary and rule rationale are external |
@@ -84,7 +85,7 @@ certification.
 |---|---|---|
 | GOVERN | Partial | Security policy, provider disclosure, release gates, and explicit limitations exist; organizations still need an AI-risk owner, inventory, risk register, review cadence, incident process, and approval records |
 | MAP | Partial | Data sent to providers, intended uses, and feature limitations are documented; stakeholders, impacts, misuse cases, contracts, and regional requirements remain use-case specific |
-| MEASURE | Partial | Deterministic tests, linkage metrics, and model-evaluation guidance exist; representative LLM, NER, linkage, subgroup, and adversarial acceptance results remain deployment-specific |
+| MEASURE | Partial | Deterministic parity tests, persisted worker/executor evidence, repeated-run memory observations, linkage convergence/labeled metrics, and pinned exact-span NER regression results exist; representative production, subgroup, adversarial, multi-host, and fault-recovery acceptance results remain deployment-specific |
 | MANAGE | Partial | LLM is opt-in, failures are structured, linkage consolidation fails closed on unsafe/warning fits by default, and Lambda has budgets/alarms; residual-risk acceptance and ongoing monitoring remain external |
 
 ## SLSA v1.2 release status
@@ -142,13 +143,24 @@ default; `allow_warning_fit=True` is an explicit, auditable override after
 labeled evaluation. NER label filters are checked against labels actually
 provided by the loaded pipeline.
 
+The bundled Few-NERD thresholds are regression floors for one pinned,
+label-filtered English fixture. They are not recommended production
+acceptance thresholds and do not replace a representative domain/language
+holdout. The installed model-tree digest excludes Python bytecode caches and
+is a source/data drift sentinel, not code-signing or execution-authenticity
+evidence.
+
 ## Operational responsibilities
 
 Operational controls such as IAM, encryption keys, network egress, retention,
 monitoring ownership, incident response, provider approval, human review,
 recovery objectives, and legal obligations remain the deploying
-organization's responsibility. Mocked tests cannot establish live AWS
-permissions, delivery, alarms, availability, or restore behavior.
+organization's responsibility. The distributed evidence uses one host, local
+disk, and uncontrolled cache state; memory evidence is per observed process
+rather than aggregate or cgroup usage; and the Lambda gate uses RIE and MinIO
+without contacting an external AWS service. These tests cannot establish
+multi-host behavior, live AWS permissions or encryption, managed-service
+delivery and alarms, availability, failover, or restore objectives.
 
 Linkage and NER audits may contain personal or otherwise sensitive source
 content and identifiers. LLM prompts contain column names, dtypes, aggregate

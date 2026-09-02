@@ -6,13 +6,27 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ### Added
 
-- Reproducible all-engine quality, linkage input/backend, NER, and local
-  Lambda-handler benchmark matrices with asserted results and JSON output.
+- Persisted-Parquet distributed correctness benchmarking with Dask child-
+  process evidence, Spark event-log executor/task evidence, and an optional
+  external-cluster minimum-host requirement.
+- Repeated-run correctness and per-process high-water-memory regression gates
+  for all five dataframe engines.
+- A pinned Few-NERD exact-span NER gate with corpus, selection, model-release,
+  and installed source/data-tree hashes plus aggregate and per-label floors.
+- A local actual-image Lambda RIE/MinIO gate covering boto3 transfer, report
+  encryption metadata, cache reuse, OCI revision checks, Docker resource
+  constraints, and oversized-input rejection without contacting external AWS
+  services.
 
 ### Changed
 
-- README benchmark evidence now records the exact schemas, hardware,
-  methodology, compatibility boundaries, and measured performance.
+- The default record-linkage EM budget increased from 15 to 100 iterations so
+  the deterministic 5,000- and 25,000-row benchmark distributions converge;
+  non-converged, unsafe, and warning-fit safeguards remain in force.
+- NER callers can require an exact model version and installed source/data
+  SHA-256 drift pin, whose scope is recorded in successful audits.
+- README benchmark evidence records schemas, execution boundaries, hardware,
+  methodology, residual risks, and measured performance.
 - Assurance guidance records the independently verified v3.4.0 SLSA Build L2
   provenance for the published wheel and sdist.
 

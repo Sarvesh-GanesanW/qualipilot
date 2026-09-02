@@ -175,17 +175,21 @@ scripts in `scripts/` to measure your own workload.
 These are point-in-time results from 2026-09-02, not compatibility promises or
 service-level objectives. Release validation used Qualipilot v3.4.0 at commit
 `a1bc30a`; the reproducible benchmark drivers and results use clean commit
-`b17faeb`. The full standards and residual-risk assessment is in
+`b17faeb`. The additional readiness gates and clean reruns below use commit
+`db1ce77699f334af7258ebd7c1e8f4f654ce5436`. The full standards and
+residual-risk assessment is in
 [docs/ASSURANCE.md](https://github.com/Sarvesh-GanesanW/qualipilot/blob/main/docs/ASSURANCE.md).
 
 | Scope | Result |
 |---|---|
 | v3.4.0 CI and release gate | 602 passed and 1 skipped in each non-Spark matrix environment; dedicated Spark 3.5.6 and 4.2.0 jobs each passed 17 tests. Ruff, formatting, strict MyPy, and the 70% coverage gate passed; the Ubuntu/Python 3.12 artifact recorded 87.31% line and 76.83% branch coverage |
-| Post-release all-engine run | 563 passed; `tests/test_llm.py` was ignored and 18 additional LLM-named tests were deselected. Ruff, formatting, and strict MyPy passed in the Spark environment |
+| Post-release all-engine run | 573 passed; `tests/test_llm.py` was ignored and 18 additional LLM-named tests were deselected. Ruff, formatting, package MyPy, and explicit strict MyPy over seven benchmark drivers passed |
 | Deterministic quality performance | 10/10 asserted cells passed: five engines across the 100-million-row range and 5-million-row full-check profiles |
-| Record linkage | 12/12 asserted performance cells passed: three sizes across two input types and two compute backends |
-| NER | Exact-span/label evaluation and five 5,000-document throughput trials completed with `en_core_web_sm` 3.8.0; extraction-alignment assertions passed |
-| Lambda operations | Local benchmark of the real handler and Polars checker with fake S3 passed; 43 handler tests passed in the suite; Terraform 1.13.3 format, validation, and 21/21 module tests passed |
+| Persisted distributed quality | A local 100-million-row persisted-Parquet run passed for Dask multiprocessing and Spark standalone execution with exact range counts and recorded worker/executor evidence |
+| Repeated-run resilience | All five engines passed 30-trial, 100,000-row full-check rehearsals with exact results and configured per-process high-water-memory thresholds |
+| Record linkage | 12/12 input/backend cells passed; every warm-up and measured fit converged with `fit_status="ok"` and recovered all planted duplicates |
+| NER | The pinned `en_core_web_sm` 3.8.0 pipeline passed fixed exact-span Few-NERD regression floors over 18,915 selected documents; five throughput trials also completed |
+| Lambda operations | The fake-S3 performance benchmark passed; a separate actual-image RIE/MinIO gate passed boto3 download, an SSE-S3 request with returned `AES256` metadata, metadata-cache, provenance, and input-limit assertions under Docker limits |
 | Groundzero adapter | 41 connector tests passed in the adjacent Spark runtime repository |
 
 ### Supported execution matrix
@@ -275,6 +279,56 @@ sources have different materialization costs, and the lazy sources were not
 cached. These synthetic, CPU-local results are a correctness-backed workload
 comparison, not an engine ranking or production SLA.
 
+The generated-source 100-million-row matrix used Dask's threaded scheduler
+and Spark `local[8]`; those timings do not establish a worker-process,
+executor, or multi-host boundary. Persisted distributed execution was tested
+separately below.
+
+### Persisted distributed execution
+
+A separate correctness gate read the same 100,000,000-row, four-column
+`int64` schema from 64 local Snappy-Parquet files totaling 463,864,911 bytes.
+Dataset generation was excluded and filesystem cache state was uncontrolled.
+
+| Engine | Observed execution boundary | Quality wall time | Exact range violations | Result |
+|---|---|---:|---|---:|
+| Dask | two spawned child processes per checker action | 43.228 s | 10,000,000 / 20,000,000 / 20,000,000 | PASS |
+| Spark | two standalone worker/executor JVMs; executor IDs `0` and `1`; 142 quality tasks | 32.591 s | 10,000,000 / 20,000,000 / 20,000,000 | PASS |
+
+Both runs used one physical host and local disk. They establish persisted-data
+and process/executor integration on this fixture, not multi-host execution,
+remote-object-store behavior, network resilience, production capacity,
+availability, or a service-level objective. The Spark driver also supports an
+existing non-local master and a configurable minimum distinct-host assertion
+for deployment-owned tests.
+
+### Repeated-run resilience
+
+A clean local rehearsal ran the 100,000-row full-check profile for 30 measured
+trials after a cold call and warm-up. Every trial retained the expected check
+results. Non-Spark processes used 2,048 MiB peak and 512 MiB post-warm-up HWM
+growth thresholds; Spark used 4,096 MiB and 2,048 MiB for each observed
+process. These are acceptance checks evaluated between completed trials, not
+hard cgroup memory caps.
+
+| Engine | Max/median time | Python peak / growth (MiB) | Spark driver JVM peak / growth (MiB) | Result |
+|---|---:|---:|---:|---:|
+| Pandas | 1.058 | 181.613 / 0.164 | — | PASS |
+| Polars | 1.096 | 198.293 / 0.109 | — | PASS |
+| DuckDB | 1.173 | 307.668 / 32.066 | — | PASS |
+| Dask | 1.111 | 202.059 / 3.715 | — | PASS |
+| Spark | 1.348 | 200.465 / 0.172 | 1,865.234 / 327.480 | PASS |
+
+The time ratio was recorded but had no failure threshold. Memory is Linux
+`/proc` high-water evidence for the observed parent/driver processes, not
+aggregate host, Dask-worker, Spark-executor, or cgroup memory. The suite also
+covers conditional-write retry, size/expansion rejection, failed-check
+reporting, input-version races, atomic output restoration, and interruption
+from an injected `KeyboardInterrupt` at the atomic-replacement boundary. These
+short synthetic runs and injected failures are regression sentinels, not
+long-duration leak, kernel-OOM recovery, multi-host failover, or
+production-capacity evidence.
+
 ### Record-linkage schema and performance
 
 The deterministic seed-7 dataset used the following schema. One percent of
@@ -295,41 +349,73 @@ full membership, and 100% recovery of the planted duplicates.
 
 | Base rows | Input | Compute | Candidates | Planted recall | Median (ms) |
 |---:|---|---|---:|---:|---:|
-| 5,000 | Pandas | Polars | 4,133 | 50/50 | 14.9 |
-| 5,000 | Pandas | DuckDB | 4,133 | 50/50 | 24.7 |
-| 5,000 | Polars | Polars | 4,133 | 50/50 | 14.8 |
-| 5,000 | Polars | DuckDB | 4,133 | 50/50 | 23.5 |
-| 25,000 | Pandas | Polars | 147,145 | 250/250 | 257.8 |
-| 25,000 | Pandas | DuckDB | 147,145 | 250/250 | 237.2 |
-| 25,000 | Polars | Polars | 147,145 | 250/250 | 257.5 |
-| 25,000 | Polars | DuckDB | 147,145 | 250/250 | 238.0 |
-| 100,000 | Pandas | Polars | 2,500,242 | 1,000/1,000 | 1,914.1 |
-| 100,000 | Pandas | DuckDB | 2,500,242 | 1,000/1,000 | 1,182.3 |
-| 100,000 | Polars | Polars | 2,500,242 | 1,000/1,000 | 1,993.3 |
-| 100,000 | Polars | DuckDB | 2,500,242 | 1,000/1,000 | 1,199.9 |
+| 5,000 | Pandas | Polars | 4,133 | 50/50 | 34.4 |
+| 5,000 | Pandas | DuckDB | 4,133 | 50/50 | 43.5 |
+| 5,000 | Polars | Polars | 4,133 | 50/50 | 34.8 |
+| 5,000 | Polars | DuckDB | 4,133 | 50/50 | 42.7 |
+| 25,000 | Pandas | Polars | 147,145 | 250/250 | 734.6 |
+| 25,000 | Pandas | DuckDB | 147,145 | 250/250 | 717.0 |
+| 25,000 | Polars | Polars | 147,145 | 250/250 | 738.9 |
+| 25,000 | Polars | DuckDB | 147,145 | 250/250 | 716.6 |
+| 100,000 | Pandas | Polars | 2,500,242 | 1,000/1,000 | 1,943.3 |
+| 100,000 | Pandas | DuckDB | 2,500,242 | 1,000/1,000 | 1,174.3 |
+| 100,000 | Polars | Polars | 2,500,242 | 1,000/1,000 | 1,978.0 |
+| 100,000 | Polars | DuckDB | 2,500,242 | 1,000/1,000 | 1,151.2 |
 
-All eight 5,000- and 25,000-row cells returned `fit_status="warning"`
-because EM did not converge within 15 iterations; all four 100,000-row cells
-returned `fit_status="ok"`. `PASS` above means the structural and recovery
-assertions passed, not that a warning fit is production-approved. Consolidation
-rejects warning fits by default.
+The former default of 15 EM iterations was too small for the deterministic
+5,000- and 25,000-row comparison-level distributions. The default is now 100
+iterations at the existing `1e-3` tolerance. Focused regressions require both
+distributions to converge after more than 15 but within 100 iterations. Every
+warm-up and measured cell above returned `fit_status="ok"` without a fit
+warning. This does not guarantee convergence on other datasets; diagnostics
+remain mandatory and consolidation still rejects warning or rejected fits by
+default.
 
 This planted synthetic evaluation validates the pipeline and scaling path; it
 does not establish accuracy, calibration, fairness, or a universal threshold
 for real identities.
 
-### NER schema and performance
+### NER quality and performance
 
-`en_core_web_sm` 3.8.0 with spaCy 3.8.16 was evaluated against eight retained
-English documents containing 17 hand-labeled exact character spans and labels.
-It returned 14 true positives, three false positives, and three false
-negatives: precision, recall, and F1 were each 0.823529. Model load took 0.690
-seconds. Five measured trials over a deterministic 5,000-short-document list
-produced a median 1,866.8 documents/second and 407 MiB process high-water RSS.
-The tiny corpus is an interface smoke, not a production model-quality claim;
-use a versioned domain/language holdout and per-label gates. The benchmark
-records the installed model version, but the model artifact is caller-managed
-and is not locked by Qualipilot's project dependencies.
+The gate uses Few-NERD's CC BY-SA 4.0 supervised test distribution at revision
+`205f3e9c9f3577ea2561d43f2f62dc249ab92d5b`, with source SHA-256
+`b7ad746fcbeb68fcc235ba7142d7c3723ea2dc39930089e947284defecf300c6`.
+
+| Source field | Type | Use |
+|---|---|---|
+| `id` | string | stable source-document identifier |
+| `tokens` | list of strings | text reconstructed with one ASCII space between tokens |
+| `fine_ner_tags` | list of integers | token-aligned reference labels |
+
+Only person, organization, and location-GPE references are mapped to spaCy's
+`PERSON`, `ORG`, and `GPE` labels. Entity-free sentences are retained;
+sentences containing an incompatible entity label are excluded. The pinned
+selection hash is
+`ede4ba2d39f35c9a0843d803c65cddd68b794177a807a065b079f266a08a704c`.
+This selected 18,915 of 37,648 documents with 35,396 reference entities.
+Matching requires the exact reconstructed character span and mapped label.
+
+| Metric | Observed | Regression floor |
+|---|---:|---:|
+| Micro precision | 0.552923 | 0.50 |
+| Micro recall | 0.495875 | 0.45 |
+| Micro F1 | 0.522848 | 0.47 |
+| PERSON F1 | 0.671000 | 0.62 |
+| ORG F1 | 0.331101 | 0.28 |
+| GPE F1 | 0.581485 | 0.52 |
+
+`en_core_web_sm` 3.8.0 under spaCy 3.8.16 passed every floor. CI pins the
+model wheel download by SHA-256. The audit also records a deterministic digest
+of installed model source/data files; its declared scope excludes
+`__pycache__` and `.pyc`, so it is a drift sentinel rather than code-signing
+or execution-authenticity evidence. Five 5,000-document throughput trials had
+a 419.252 documents/second median and 904.2 MiB process high-water RSS.
+
+These are fixed cross-domain regression floors over a label-filtered,
+single-space reconstruction, not production accuracy, calibration, fairness,
+language coverage, or fitness thresholds. ORG F1 is only 0.331101. Callers
+must pin and validate their own model wheel and representative
+domain/language holdout before production use.
 
 ### Lambda-handler schema and performance
 
@@ -344,12 +430,28 @@ call after import took 3.243 seconds, and five post-warm-up trials had a 3.369
 second median (1.484 million logical rows/second). Worker-lifetime high-water
 RSS was 0.96 GiB; input generation ran in the parent and was excluded.
 
-This is not an AWS Lambda cold-start or S3 benchmark. The retained test double
-uses local `copyfile` for download and an in-memory upload, with no boto3,
-network, TLS, Runtime Interface Emulator, cgroup, or AWS service. The freshly
-generated source may be OS-cache-hot. Use a deployed load/recovery exercise to
-establish Lambda memory, duration, concurrency, IAM, alarm, and availability
-objectives.
+That 5-million-row timing remains a fake-S3, OS-cache-sensitive process
+benchmark and is not an AWS Lambda or S3 measurement.
+
+Separately, `scripts/check_lambda_container.py` exercised a revision-labeled
+image built from `docker/Dockerfile.lambda`. In CI, the import smoke, RIE gate,
+and scanner target the same image. The gate invoked the default handler through
+Lambda RIE on an internal Docker bridge. The container ran non-root with a
+read-only root filesystem, 1 CPU, 1 GiB memory, equal memory/swap limits, and a
+256-PID limit. Boto3 read from pinned MinIO, the real Polars checker completed
+all seven enabled checks, the report was read back with `AES256` server-side-
+encryption metadata, and a second invocation reused the stored idempotency
+metadata. A 1,025-byte object was rejected against a 1,024-byte cap before
+download and produced no report.
+
+The clean observed first request after RIE readiness was 1.060 seconds, the
+cached request 0.009 seconds, and the rejected request 0.008 seconds; the
+container memory snapshot was 128.7 MiB. These are diagnostic local timings,
+not Lambda cold starts. Fake credentials and a service-specific MinIO endpoint
+were isolated on a bridge with no external route; no external AWS service or
+user AWS account was contacted. RIE and MinIO do not establish AWS IAM,
+S3/KMS/TLS, CloudWatch, SQS destination, concurrency, managed-service failure,
+or availability behavior.
 
 Reproduce the benchmark matrix from a Spark-enabled environment:
 
@@ -369,6 +471,31 @@ python scripts/bench_ner.py --model en_core_web_sm --docs 5000 --trials 5 \
   --output reports/ner.json
 python scripts/bench_lambda.py --rows 5000000 --threads 8 --trials 5 \
   --output reports/lambda.json
+
+python scripts/bench_distributed.py --engine dask \
+  --rows 100000000 --partitions 64 --workers 2 \
+  --data reports/distributed-input.parquet \
+  --output reports/distributed-dask.json
+python scripts/bench_distributed.py --engine spark \
+  --rows 100000000 --partitions 64 --workers 2 \
+  --data reports/distributed-input.parquet \
+  --output reports/distributed-spark.json
+
+for engine in pandas polars duckdb dask; do
+  python scripts/bench_checker.py \
+    --engine "$engine" --profile full --rows 100000 \
+    --partitions 8 --threads 2 --trials 30 \
+    --max-process-hwm-mib 2048 --max-hwm-growth-mib 512 \
+    --output "reports/resilience-$engine.json"
+done
+python scripts/bench_checker.py \
+  --engine spark --profile full --rows 100000 \
+  --partitions 8 --threads 2 --trials 30 \
+  --max-process-hwm-mib 4096 --max-hwm-growth-mib 2048 \
+  --output reports/resilience-spark.json
+
+python scripts/check_lambda_container.py \
+  --output reports/lambda-rie.json
 ```
 
 Reproduce the non-LLM verification:
