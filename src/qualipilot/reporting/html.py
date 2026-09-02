@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import html
 import json
+from collections.abc import Callable
 from typing import Any
 
 from qualipilot.models.results import CheckResult, QualityReport
@@ -108,26 +109,8 @@ def _human_summary_html(result: CheckResult) -> str:
     payload = result.payload
     if not payload:
         return ""
-    name = result.name
-    if name == "dataset_contract":
-        return _dataset_contract_html(payload)
-    if name == "missing_values":
-        return _missing_html(payload)
-    if name == "duplicates":
-        return _duplicates_html(payload)
-    if name == "data_types":
-        return _types_html(payload)
-    if name == "outliers":
-        return _outliers_html(payload)
-    if name == "ranges":
-        return _ranges_html(payload)
-    if name == "cardinality":
-        return _cardinality_html(payload)
-    if name == "freshness":
-        return _freshness_html(payload)
-    if name == "linkage":
-        return _linkage_html(payload)
-    return ""
+    renderer = _SUMMARY_RENDERERS.get(result.name)
+    return renderer(payload) if renderer else ""
 
 
 def _missing_html(payload: dict[str, Any]) -> str:
@@ -338,3 +321,16 @@ def _linkage_html(payload: dict[str, Any]) -> str:
         f"{payload.get('records_in_duplicate_groups', 0)}</li>"
         "</ul>"
     )
+
+
+_SUMMARY_RENDERERS: dict[str, Callable[[dict[str, Any]], str]] = {
+    "dataset_contract": _dataset_contract_html,
+    "missing_values": _missing_html,
+    "duplicates": _duplicates_html,
+    "data_types": _types_html,
+    "outliers": _outliers_html,
+    "ranges": _ranges_html,
+    "cardinality": _cardinality_html,
+    "freshness": _freshness_html,
+    "linkage": _linkage_html,
+}

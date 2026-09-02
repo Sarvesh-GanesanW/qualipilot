@@ -189,13 +189,7 @@ def consolidate_records(
     config: ConsolidationConfig,
 ) -> ConsolidationResult:
     """Choose one record per cluster and apply explicit field merge rules."""
-    if not isinstance(frame, pl.DataFrame):
-        raise TypeError("frame must be a Polars DataFrame")
-    if not isinstance(config, ConsolidationConfig):
-        raise TypeError("config must be a ConsolidationConfig")
-    if not isinstance(clusters, Mapping):
-        raise TypeError("clusters must be a mapping")
-
+    _validate_consolidation_arguments(frame, config, clusters)
     _validate_input(frame, id_column, clusters, config)
     if frame.is_empty():
         return ConsolidationResult(frame.clone(), {}, ())
@@ -325,6 +319,19 @@ def consolidate_records(
     )
 
 
+def _validate_consolidation_arguments(
+    frame: pl.DataFrame,
+    config: ConsolidationConfig,
+    clusters: Mapping[object, int],
+) -> None:
+    if not isinstance(frame, pl.DataFrame):
+        raise TypeError("frame must be a Polars DataFrame")
+    if not isinstance(config, ConsolidationConfig):
+        raise TypeError("config must be a ConsolidationConfig")
+    if not isinstance(clusters, Mapping):
+        raise TypeError("clusters must be a mapping")
+
+
 def _singleton_result(
     frame: pl.DataFrame,
     *,
@@ -412,6 +419,15 @@ def _validate_consolidation_frame(
     }
     for column in order_columns:
         _require_orderable(frame.get_column(column), column)
+    _validate_latest_merge_orders(frame, id_column, config)
+    return record_ids
+
+
+def _validate_latest_merge_orders(
+    frame: pl.DataFrame,
+    id_column: str,
+    config: ConsolidationConfig,
+) -> None:
     for column, rule in config.merge_rules.items():
         if rule.strategy != "latest" or rule.order_by is None:
             continue
@@ -425,7 +441,6 @@ def _validate_consolidation_frame(
                 f"latest merge for {column!r} requires non-missing "
                 f"{rule.order_by!r} values for source IDs: {ids}"
             )
-    return record_ids
 
 
 def _validate_clusters(

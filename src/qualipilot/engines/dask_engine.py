@@ -253,14 +253,12 @@ class DaskEngine(Engine):
         )
         out: dict[str, dict[float, float]] = {column: {} for column in columns}
         for (column, kind, _), value in zip(tasks, computed, strict=True):
-            if kind == "min":
-                out[column][0.0] = float(value)
-            elif kind == "max":
-                out[column][1.0] = float(value)
-            else:
+            if kind == "quantiles":
                 out[column].update(
                     {float(q): float(value.loc[q]) for q in interior}
                 )
+            else:
+                out[column][{"min": 0.0, "max": 1.0}[kind]] = float(value)
         return out
 
     @property

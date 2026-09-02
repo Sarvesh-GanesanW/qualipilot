@@ -59,7 +59,7 @@ class DuckDBEngine(Engine):
         )
 
     @classmethod
-    def from_any(  # noqa: PLR0912
+    def from_any(
         cls,
         data: Any,
         *,
@@ -108,23 +108,7 @@ class DuckDBEngine(Engine):
             if threads is not None:
                 con.execute("SET threads = ?", [threads])
 
-            if isinstance(data, str | Path):
-                path = Path(data)
-                source = _file_source(path)
-                con.execute(
-                    f"CREATE VIEW {quote_identifier(view)} AS "
-                    f"SELECT * FROM {source}"
-                )
-            elif type(data).__module__.startswith("pandas"):
-                con.register(view, data)
-            elif type(data).__module__.startswith("polars"):
-                con.register(view, data.to_arrow())
-            elif type(data).__module__.startswith("pyarrow"):
-                con.register(view, data)
-            else:
-                raise TypeError(
-                    f"cannot build DuckDBEngine from {type(data).__name__}"
-                )
+            _register_private_source(con, view, data)
             return cls(con, view)
         except Exception:
             con.close()
@@ -527,6 +511,29 @@ def _relation_from_connection(
     raise TypeError(f"cannot build DuckDBEngine from {type(data).__name__}")
 
 
+def _register_private_source(
+    connection: duckdb.DuckDBPyConnection,
+    view: str,
+    data: Any,
+) -> None:
+    """Register a supported input on an engine-owned connection."""
+    if isinstance(data, str | Path):
+        source = _file_source(Path(data))
+        connection.execute(
+            f"CREATE VIEW {quote_identifier(view)} AS SELECT * FROM {source}"
+        )
+    elif type(data).__module__.startswith("pandas"):
+        connection.register(view, data)
+    elif type(data).__module__.startswith("polars"):
+        connection.register(view, data.to_arrow())
+    elif type(data).__module__.startswith("pyarrow"):
+        connection.register(view, data)
+    else:
+        raise TypeError(
+            f"cannot build DuckDBEngine from {type(data).__name__}"
+        )
+
+
 def _validate_source_columns(data: Any) -> None:
     module = type(data).__module__
     if module.startswith("pandas"):
@@ -545,23 +552,12 @@ def _validate_source_columns(data: Any) -> None:
             validate_column_names(pq.read_schema(path).names)
 
 
-def _bind_relation_parameters(  # noqa: PLR0912
+def _bind_relation_parameters(
     sql: str,
     params: list[Any],
 ) -> str:
-    literals: list[str] = []
-    for value in params:
-        if isinstance(value, bool | int):
-            literals.append(str(value).upper())
-        elif isinstance(value, float) and math.isfinite(value):
-            literals.append(repr(value))
-        else:
-            raise TypeError(
-                "DuckDB relation parameters must be finite numbers"
-            )
-
+    parameter = iter(_relation_parameter_literals(params))
     result: list[str] = []
-    parameter = iter(literals)
     quote: str | None = None
     index = 0
     while index < len(sql):
@@ -590,3 +586,17 @@ def _bind_relation_parameters(  # noqa: PLR0912
     except StopIteration:
         return "".join(result)
     raise ValueError("too many DuckDB relation query parameters")
+
+
+def _relation_parameter_literals(params: list[Any]) -> list[str]:
+    literals: list[str] = []
+    for value in params:
+        if isinstance(value, bool | int):
+            literals.append(str(value).upper())
+        elif isinstance(value, float) and math.isfinite(value):
+            literals.append(repr(value))
+        else:
+            raise TypeError(
+                "DuckDB relation parameters must be finite numbers"
+            )
+    return literals

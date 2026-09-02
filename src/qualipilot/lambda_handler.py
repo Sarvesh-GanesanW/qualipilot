@@ -427,6 +427,30 @@ def _download_mutable_object(
             ) from exc
         raise
 
+    downloaded_bytes = _write_object_body(
+        response,
+        target,
+        source=f"s3://{bucket}/{key}",
+        etag=etag,
+        content_length=content_length,
+        max_input_bytes=max_input_bytes,
+    )
+    if downloaded_bytes != content_length:
+        raise RuntimeError(
+            f"s3://{bucket}/{key} ended after {downloaded_bytes} bytes; "
+            f"expected {content_length} bytes"
+        )
+
+
+def _write_object_body(
+    response: dict[str, Any],
+    target: Path,
+    *,
+    source: str,
+    etag: str,
+    content_length: int,
+    max_input_bytes: int,
+) -> int:
     body = response.get("Body")
     read = getattr(body, "read", None)
     close = getattr(body, "close", None)
@@ -440,7 +464,7 @@ def _download_mutable_object(
             response.get("ETag") != etag
             or response.get("ContentLength") != content_length
         ):
-            raise RuntimeError(f"s3://{bucket}/{key} changed before download")
+            raise RuntimeError(f"{source} changed before download")
         with target.open("wb") as output:
             while chunk := read(1024 * 1024):
                 if not isinstance(chunk, bytes):
@@ -450,17 +474,11 @@ def _download_mutable_object(
                     downloaded_bytes > content_length
                     or downloaded_bytes > max_input_bytes
                 ):
-                    raise ValueError(
-                        f"s3://{bucket}/{key} exceeded its validated size"
-                    )
+                    raise ValueError(f"{source} exceeded its validated size")
                 output.write(chunk)
     finally:
         close()
-    if downloaded_bytes != content_length:
-        raise RuntimeError(
-            f"s3://{bucket}/{key} ended after {downloaded_bytes} bytes; "
-            f"expected {content_length} bytes"
-        )
+    return downloaded_bytes
 
 
 def _store_report(

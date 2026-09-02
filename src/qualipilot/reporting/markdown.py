@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import html
 import json
+from collections.abc import Callable
 from typing import Any
 
 from qualipilot.models.results import CheckResult, QualityReport
@@ -77,25 +78,9 @@ def _append_payload_details(parts: list[str], result: CheckResult) -> None:
     if not payload:
         return
 
-    name = result.name
-    if name == "dataset_contract":
-        _dataset_contract_section(parts, payload)
-    elif name == "missing_values":
-        _missing_section(parts, payload)
-    elif name == "duplicates":
-        _duplicates_section(parts, payload)
-    elif name == "data_types":
-        _types_section(parts, payload)
-    elif name == "outliers":
-        _outliers_section(parts, payload)
-    elif name == "ranges":
-        _ranges_section(parts, payload)
-    elif name == "cardinality":
-        _cardinality_section(parts, payload)
-    elif name == "freshness":
-        _freshness_section(parts, payload)
-    elif name == "linkage":
-        _linkage_section(parts, payload)
+    section = _PAYLOAD_SECTIONS.get(result.name)
+    if section:
+        section(parts, payload)
 
     parts.append("")
     parts.append("Raw payload:")
@@ -303,3 +288,16 @@ def _markdown_text(value: Any) -> str:
 
 def _inline_code(value: Any) -> str:
     return f"`{_markdown_text(value).replace('`', '&#96;')}`"
+
+
+_PAYLOAD_SECTIONS: dict[str, Callable[[list[str], dict[str, Any]], None]] = {
+    "dataset_contract": _dataset_contract_section,
+    "missing_values": _missing_section,
+    "duplicates": _duplicates_section,
+    "data_types": _types_section,
+    "outliers": _outliers_section,
+    "ranges": _ranges_section,
+    "cardinality": _cardinality_section,
+    "freshness": _freshness_section,
+    "linkage": _linkage_section,
+}

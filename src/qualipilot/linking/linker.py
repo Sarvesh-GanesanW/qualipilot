@@ -397,7 +397,7 @@ def _ensure_polars(df: Any) -> pl.DataFrame:
     raise TypeError(f"unsupported frame type: {type(df).__name__}")
 
 
-def _validate_link_inputs(  # noqa: PLR0912
+def _validate_link_inputs(
     df: pl.DataFrame,
     config: LinkConfig,
     df_right: pl.DataFrame | None,
@@ -424,82 +424,10 @@ def _validate_link_inputs(  # noqa: PLR0912
         *blocking_columns,
     }
     for label, frame in frames:
-        missing = sorted(required - set(frame.columns))
-        if missing:
-            raise ValueError(
-                f"{label} frame is missing required columns: {missing}"
-            )
-        _validate_linkage_dtypes(frame, config, label=label)
-        _validate_unique_ids(
-            frame,
-            config.unique_id_column,
-            label=label,
-        )
-        for comparison in config.comparisons:
-            if isinstance(comparison, NumericDiff) and str(
-                frame.schema[comparison.column]
-            ) in {"Int128", "UInt128"}:
-                raise ValueError(
-                    f"{label} column {comparison.column!r} uses an "
-                    "unsupported 128-bit numeric type"
-                )
-            if (
-                isinstance(comparison, NumericDiff)
-                and not frame.schema[comparison.column].is_numeric()
-            ):
-                raise ValueError(
-                    f"{label} column {comparison.column!r} must be numeric"
-                )
-            if (
-                isinstance(comparison, NumericDiff)
-                and frame.schema[comparison.column].is_float()
-            ):
-                has_infinite = frame.select(
-                    pl.col(comparison.column).is_infinite().any()
-                ).item()
-                if has_infinite:
-                    raise ValueError(
-                        f"{label} column {comparison.column!r} "
-                        "must not contain infinite values"
-                    )
-            if isinstance(comparison, FuzzyString) and frame.schema[
-                comparison.column
-            ].base_type() not in {pl.String, pl.Categorical, pl.Enum}:
-                raise ValueError(
-                    f"{label} column {comparison.column!r} must be string-like"
-                )
+        _validate_link_frame(frame, config, label=label, required=required)
 
     if df_right is not None:
-        for rule in config.blocking_rules:
-            for column in rule:
-                if (
-                    column not in config.normalization
-                    and df.schema[column] != df_right.schema[column]
-                ):
-                    raise ValueError(
-                        f"blocking column {column!r} has incompatible "
-                        "left/right dtypes"
-                    )
-        for comparison in config.comparisons:
-            if (
-                isinstance(comparison, ExactMatch)
-                and comparison.column not in config.normalization
-                and df.schema[comparison.column]
-                != df_right.schema[comparison.column]
-            ):
-                raise ValueError(
-                    f"exact-match column {comparison.column!r} has "
-                    "incompatible left/right dtypes"
-                )
-            if isinstance(comparison, NumericDiff):
-                left_dtype = df.schema[comparison.column]
-                right_dtype = df_right.schema[comparison.column]
-                if left_dtype.is_decimal() != right_dtype.is_decimal():
-                    raise ValueError(
-                        f"numeric comparison column {comparison.column!r} "
-                        "mixes Decimal and non-Decimal dtypes; cast both "
-                        "sides to compatible dtypes before linking"
-                    )
+        _validate_link_frame_compatibility(df, df_right, config)
 
     generated = {"__id_l__", "__id_r__", "__left_count__", "__right_count__"}
     conflict = sorted(generated & blocking_columns)
@@ -514,6 +442,92 @@ def _validate_link_inputs(  # noqa: PLR0912
         generated & set(comparison_aliases)
     ):
         raise ValueError("comparison columns produce reserved output names")
+
+
+def _validate_link_frame(
+    frame: pl.DataFrame,
+    config: LinkConfig,
+    *,
+    label: str,
+    required: set[str],
+) -> None:
+    missing = sorted(required - set(frame.columns))
+    if missing:
+        raise ValueError(
+            f"{label} frame is missing required columns: {missing}"
+        )
+    _validate_linkage_dtypes(frame, config, label=label)
+    _validate_unique_ids(frame, config.unique_id_column, label=label)
+    for comparison in config.comparisons:
+        if isinstance(comparison, NumericDiff) and str(
+            frame.schema[comparison.column]
+        ) in {"Int128", "UInt128"}:
+            raise ValueError(
+                f"{label} column {comparison.column!r} uses an "
+                "unsupported 128-bit numeric type"
+            )
+        if (
+            isinstance(comparison, NumericDiff)
+            and not frame.schema[comparison.column].is_numeric()
+        ):
+            raise ValueError(
+                f"{label} column {comparison.column!r} must be numeric"
+            )
+        if (
+            isinstance(comparison, NumericDiff)
+            and frame.schema[comparison.column].is_float()
+        ):
+            has_infinite = frame.select(
+                pl.col(comparison.column).is_infinite().any()
+            ).item()
+            if has_infinite:
+                raise ValueError(
+                    f"{label} column {comparison.column!r} "
+                    "must not contain infinite values"
+                )
+        if isinstance(comparison, FuzzyString) and frame.schema[
+            comparison.column
+        ].base_type() not in {pl.String, pl.Categorical, pl.Enum}:
+            raise ValueError(
+                f"{label} column {comparison.column!r} must be string-like"
+            )
+
+
+def _validate_link_frame_compatibility(
+    df: pl.DataFrame,
+    df_right: pl.DataFrame,
+    config: LinkConfig,
+) -> None:
+    for rule in config.blocking_rules:
+        for column in rule:
+            if (
+                column not in config.normalization
+                and df.schema[column] != df_right.schema[column]
+            ):
+                raise ValueError(
+                    f"blocking column {column!r} has incompatible "
+                    "left/right dtypes"
+                )
+    for comparison in config.comparisons:
+        if (
+            isinstance(comparison, ExactMatch)
+            and comparison.column not in config.normalization
+            and df.schema[comparison.column]
+            != df_right.schema[comparison.column]
+        ):
+            raise ValueError(
+                f"exact-match column {comparison.column!r} has "
+                "incompatible left/right dtypes"
+            )
+        if isinstance(comparison, NumericDiff):
+            left_dtype = df.schema[comparison.column]
+            right_dtype = df_right.schema[comparison.column]
+            if left_dtype.is_decimal() != right_dtype.is_decimal():
+                raise ValueError(
+                    f"numeric comparison column {comparison.column!r} "
+                    "mixes Decimal and non-Decimal dtypes; cast both "
+                    "sides to compatible dtypes before linking"
+                )
 
 
 def _validate_normalization_inputs(

@@ -125,6 +125,7 @@ select = [
     "F",
     "I",
     "B",
+    "C90",
     "UP",
     "N",
     "SIM",
@@ -150,6 +151,9 @@ ignore = [
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
+
+[tool.ruff.lint.mccabe]
+max-complexity = 10
 
 [tool.ruff.format]
 quote-style = "double"

@@ -312,30 +312,23 @@ def dtype_family_from_name(dtype: str) -> str:
         }
     ):
         return "integer"
-    if value.startswith(("float", "double", "real")):
-        return "float"
-    if value.startswith("decimal"):
-        return "decimal"
-    if value.startswith(("bool", "boolean")):
-        return "boolean"
-    if value.startswith(("datetime", "timestamp")):
-        return "datetime"
-    if value.startswith("date"):
-        return "date"
-    if value.startswith(("duration", "timedelta")):
-        return "duration"
-    if value.startswith("time"):
-        return "time"
-    if value.startswith(("binary", "bytes")) or value == "blob":
-        return "binary"
-    if value.startswith(("str", "string", "varchar", "char")) or value in {
-        "text",
-        "utf8",
-    }:
-        return "string"
-    if value.startswith(("categorical", "category", "enum")):
-        return "categorical"
-    return value
+    for prefixes, family in (
+        (("float", "double", "real"), "float"),
+        (("decimal",), "decimal"),
+        (("bool", "boolean"), "boolean"),
+        (("datetime", "timestamp"), "datetime"),
+        (("date",), "date"),
+        (("duration", "timedelta"), "duration"),
+        (("time",), "time"),
+        (("binary", "bytes"), "binary"),
+        (("str", "string", "varchar", "char"), "string"),
+        (("categorical", "category", "enum"), "categorical"),
+    ):
+        if value.startswith(prefixes):
+            return family
+    return {"blob": "binary", "text": "string", "utf8": "string"}.get(
+        value, value
+    )
 
 
 def object_dtype_family(families: set[str]) -> str:
