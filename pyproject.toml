@@ -79,7 +79,7 @@ all = [
 [dependency-groups]
 dev = [
     "uv==0.11.21",
-    "ruff==0.16.0",
+    "ruff==0.16.5",
     "mypy==2.3.0",
     "pytest>=8.3,<10",
     "pytest-cov>=5.0,<8",
