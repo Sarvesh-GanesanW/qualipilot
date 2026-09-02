@@ -4,6 +4,18 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Reproducible all-engine quality, linkage input/backend, NER, and local
+  Lambda-handler benchmark matrices with asserted results and JSON output.
+
+### Changed
+
+- README benchmark evidence now records the exact schemas, hardware,
+  methodology, compatibility boundaries, and measured performance.
+- Assurance guidance records the independently verified v3.4.0 SLSA Build L2
+  provenance for the published wheel and sdist.
+
 ## [3.4.0] - 2026-09-02
 
 ### Added

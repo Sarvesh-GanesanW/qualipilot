@@ -29,8 +29,8 @@ The statuses below mean:
 | LLM narrative | OWASP LLM Top 10; NIST AI 600-1 | Partial | Default off, minimized bounded prompt, fixed untrusted-data instruction, escaped built-in sinks, no tools or agency, advisory label, provider/model provenance | Approved provider and data region, adversarial evaluation, factuality review, rate/spend limits, and incident ownership |
 | Record linkage and consolidation | Statistical evaluation and traceability | Partial | Pair caps, deterministic sampling, fit diagnostics, unsafe-fit rejection, warning-fit consolidation gate, source/config/output hashes, lineage, precision/recall/F1 API | Representative labeled holdout, threshold calibration, subgroup analysis, drift monitoring, and human review of ambiguous pairs |
 | Named-entity recognition | Model evaluation and provenance | Partial | Explicit pipeline loading, label validation, stable offsets, batching, text limits, spaCy/model metadata, input hash | Pinned model artifact hash, domain/language holdout, per-label and subgroup metrics, drift and model-change gates |
-| Lambda operations | AWS Lambda guidance and Well-Architected serverless practices | Partial, strong | Reused SDK client, immutable image digest, least-privilege IAM, encryption, version/ETag binding, idempotency, input limits, failure destination, metrics and alarms | Live IAM/encryption verification, representative load test, alarm exercise, replay test, backup restore, RTO and RPO |
-| Release supply chain | SLSA v1.2 Build track | Pending release evidence | Locked dependencies, full-SHA Actions pins, CI gates, CodeQL, dependency/container scans, PyPI trusted publishing, configured GitHub build provenance | A tagged release whose wheel and sdist attestations are emitted and independently verified |
+| Lambda operations | AWS Lambda best practices | Partial | Reused SDK client, immutable image digest, least-privilege IAM, encryption, version/ETag binding, idempotency, input limits, failure destination, metrics and alarms | Live IAM/encryption verification, representative load test, alarm exercise, replay test, backup restore, RTO and RPO |
+| Release supply chain | SLSA v1.2 Build track | Build L2 provenance verified for v3.4.0 wheel and sdist | Locked dependencies, full-SHA Actions pins, CI gates, CodeQL, dependency/container scans, PyPI trusted publishing, and GitHub-hosted signed provenance tied to tag `v3.4.0` and commit `a1bc30a` | Consumers should verify downloaded artifacts; no Build L3 or SLSA Source-level claim is made |
 
 ## ISO/IEC 25012 data-quality characteristics
 
@@ -50,7 +50,7 @@ itself establish that a dataset is fit for a particular business or legal use.
 | Confidentiality | Partial | Samples and top values default off; LLM prompts omit paths, versions, errors, samples, and top values; metadata and reports can still be sensitive |
 | Efficiency | Partial | Batched range, cardinality, null, and quantile operations plus distributed engines; workload sizing remains external |
 | Precision | Partial | Exact versus approximate quantile provenance is reported; no universal measurement-uncertainty model |
-| Traceability | Partial, strong | Schema/package/time/source/config/provider/model provenance, durations, linkage lineage, and content hashes |
+| Traceability | Partial | Schema/package/time/source/config/provider/model provenance, durations, linkage lineage, and content hashes |
 | Understandability | Partial | Structured results and human renderers; business glossary and rule rationale are external |
 | Availability | Deployment-owned | Lambda concurrency, destinations, metrics, and alarms are supplied; availability objectives need live evidence |
 | Portability | Partial | Five engines, portable dtype families, common formats, multi-OS and multi-Python CI |
@@ -89,26 +89,38 @@ certification.
 
 ## SLSA v1.2 release status
 
-The release workflow verifies the tag version, requires successful CI for the
-same commit, builds once, smoke-tests the wheel and sdist, uses PyPI trusted
-publishing, and is configured to create signed GitHub build-provenance
-attestations. Actions are pinned to full commit SHAs.
+The Qualipilot v3.4.0 wheel and sdist were built once on GitHub-hosted Actions,
+smoke-tested, attested, and published to PyPI through trusted publishing. Their
+GitHub Sigstore attestations use the `https://slsa.dev/provenance/v1`
+predicate and identify tag `v3.4.0`, commit
+`a1bc30a303bf2cbefae3954aa70a54cbfd0db28d`, and
+`.github/workflows/release.yml`.
 
-This is **prospective Build L2 design**, not a current level claim. A SLSA
-Build level applies only after a tagged artifact has emitted provenance and
-that provenance has been verified. After the first release containing the
-attestation workflow, verify both files:
+Separate post-publication verification with GitHub CLI succeeded for both
+published artifacts on 2026-09-02. Consumers can apply the same repository,
+workflow, tag, commit, and hosted-runner constraints:
 
 ```bash
-gh attestation verify dist/qualipilot-*.whl \
-  --repo Sarvesh-GanesanW/qualipilot
-gh attestation verify dist/qualipilot-*.tar.gz \
-  --repo Sarvesh-GanesanW/qualipilot
+gh attestation verify qualipilot-3.4.0-py3-none-any.whl \
+  --repo Sarvesh-GanesanW/qualipilot \
+  --signer-workflow Sarvesh-GanesanW/qualipilot/.github/workflows/release.yml \
+  --source-ref refs/tags/v3.4.0 \
+  --source-digest a1bc30a303bf2cbefae3954aa70a54cbfd0db28d \
+  --deny-self-hosted-runners
+
+gh attestation verify qualipilot-3.4.0.tar.gz \
+  --repo Sarvesh-GanesanW/qualipilot \
+  --signer-workflow Sarvesh-GanesanW/qualipilot/.github/workflows/release.yml \
+  --source-ref refs/tags/v3.4.0 \
+  --source-digest a1bc30a303bf2cbefae3954aa70a54cbfd0db28d \
+  --deny-self-hosted-runners
 ```
 
-The project does not claim a SLSA Source level because its source-control
-system does not issue a Source VSA. No Build L3 claim is made. PyPI trusted
-publishing evidence must not be described as build provenance.
+This Build L2 statement applies specifically to the verified v3.4.0 wheel and
+sdist, not every historical or future artifact. The project makes no Build L3
+claim and no SLSA Source-level claim because its source-control system does not
+issue a Source VSA. PyPI trusted-publishing evidence is publish identity, not
+build provenance.
 
 ## Statistical feature gates
 

@@ -170,79 +170,216 @@ resolve to Polars. Backend parity is covered by tests, but memory use and
 runtime depend on file format, check mix, and data distribution. Use the
 scripts in `scripts/` to measure your own workload.
 
-## Validation and benchmarks
+## Validation and benchmark matrix
 
 These are point-in-time results from 2026-09-02, not compatibility promises or
-service-level objectives. The full standards and residual-risk assessment is
-in [docs/ASSURANCE.md](https://github.com/Sarvesh-GanesanW/qualipilot/blob/main/docs/ASSURANCE.md).
+service-level objectives. Release validation used Qualipilot v3.4.0 at commit
+`a1bc30a`; the reproducible benchmark drivers and results use clean commit
+`b17faeb`. The full standards and residual-risk assessment is in
+[docs/ASSURANCE.md](https://github.com/Sarvesh-GanesanW/qualipilot/blob/main/docs/ASSURANCE.md).
 
 | Scope | Result |
 |---|---|
-| Full local quality gate | 588 passed, 1 Spark test skipped in the non-Spark environment; Ruff, formatting, strict MyPy, and 84.29% branch coverage passed |
-| All five engines | 281 focused engine/check tests passed with Polars 1.44.1, Pandas 2.3.3, DuckDB 1.5.5, Dask 2026.8.0, and Spark 4.0.0 |
-| Record linkage and consolidation | 118 focused tests passed across Polars and DuckDB |
-| NER | 10 focused tests passed, including batching, offsets, label validation, and audit provenance |
-| Lambda handler | 43 focused tests passed; Terraform format/validation and 21 module tests passed |
+| v3.4.0 CI and release gate | 602 passed and 1 skipped in each non-Spark matrix environment; dedicated Spark 3.5.6 and 4.2.0 jobs each passed 17 tests. Ruff, formatting, strict MyPy, and the 70% coverage gate passed; the Ubuntu/Python 3.12 artifact recorded 87.31% line and 76.83% branch coverage |
+| Post-release all-engine run | 563 passed; `tests/test_llm.py` was ignored and 18 additional LLM-named tests were deselected. Ruff, formatting, and strict MyPy passed in the Spark environment |
+| Deterministic quality performance | 10/10 asserted cells passed: five engines across the 100-million-row range and 5-million-row full-check profiles |
+| Record linkage | 12/12 asserted performance cells passed: three sizes across two input types and two compute backends |
+| NER | Exact-span/label evaluation and five 5,000-document throughput trials completed with `en_core_web_sm` 3.8.0; extraction-alignment assertions passed |
+| Lambda operations | Local benchmark of the real handler and Polars checker with fake S3 passed; 43 handler tests passed in the suite; Terraform 1.13.3 format, validation, and 21/21 module tests passed |
 | Groundzero adapter | 41 connector tests passed in the adjacent Spark runtime repository |
 
-### Spark 100-million-row benchmark
+### Supported execution matrix
 
-From a source checkout, run the checked benchmark in a Spark-enabled
-environment:
+`N/A` means unsupported by design, not an untested or failed cell. `PASS`
+means the benchmark executed and matched its expected assertions; the
+synthetic datasets intentionally produce warn/error quality findings.
+
+| Capability | Pandas | Polars | DuckDB | Dask | Spark |
+|---|---:|---:|---:|---:|---:|
+| Eight deterministic quality checks | PASS | PASS | PASS | PASS | PASS |
+| Embedded dedup/linkage input | PASS; converted to Polars | PASS; native | N/A | N/A | N/A |
+| Direct linkage input | PASS; converted to Polars | PASS; native | N/A | N/A | N/A |
+| Linkage compute backend | N/A | PASS | PASS | N/A | N/A |
+| Lambda dataframe engine | N/A | PASS | N/A | N/A | N/A |
+
+NER consumes strings through spaCy and is independent of dataframe engines.
+`engine="auto"` is a selector, not a sixth engine. Lambda accepts `auto` or
+Polars, does not include NER, and rejects probabilistic linkage.
+
+### Data-quality schemas
+
+The comparable scale profile generated 100,000,000 rows with four non-null
+`int64` columns. Pandas and Polars materialized a 2.98 GiB raw frame; DuckDB,
+Dask, and Spark used generated lazy sources.
+
+| Column | Expression | Inclusive rule | Exact violations |
+|---|---|---:|---:|
+| `id` | row index, 0 through 99,999,999 | contract only | 0 |
+| `amount` | `id % 1000` | 0–899 | 10,000,000 |
+| `quantity` | `id % 100` | 10–89 | 20,000,000 |
+| `score` | `id % 200` | 20–179 | 20,000,000 |
+
+Only dataset contract and the three range rules were enabled. There was no
+file or network I/O, cache, sampling, top-value collection, or LLM call.
+
+The full profile generated 5,000,000 rows and enabled dataset contract,
+missing values, exact duplicates, dtype inventory, IQR outliers, ranges,
+cardinality, and freshness.
+
+| Column | Portable dtype | Expression and purpose |
+|---|---|---|
+| `id` | integer | row index |
+| `entity_id` | integer | `id % 500000`; duplicate key, so all 5,000,000 rows are duplicate members |
+| `amount` | float | null for the first 10 rows of every 1,000-row cycle, otherwise `id % 1000`; 50,000 nulls and 500,000 range violations |
+| `quantity` | integer | `id % 100`; 1,000,000 range violations |
+| `score` | float | 10,000 every 1,000th row, otherwise `id % 200`; 5,000 injected spikes and 1,000,000 range violations |
+| `event_time` | UTC datetime | run start minus `id % 48` hours, plus two hours every 1,000th row; exercises age and future-time handling |
+
+### Data-quality performance
+
+The host was an AMD Ryzen 7 7700X with 16 logical CPUs and 30.53 GiB RAM,
+running Python 3.12.13, Polars 1.44.1, Pandas 2.3.3, DuckDB 1.5.5, Dask
+2026.8.0, Spark 4.0.0, and Java 21.0.11. Polars, DuckDB, Dask, and Spark were
+configured for eight execution threads/slots; Dask and Spark used 64
+partitions. Pandas used its native single-process execution. Each engine ran
+in a separate process: first call, one discarded warm-up, then five measured
+trials.
+
+100-million-row range profile:
+
+| Engine | Source | Setup/build or plan (s) | First call (s) | Median (s) | Logical M rows/s | Process high-water RSS |
+|---|---|---:|---:|---:|---:|---:|
+| Pandas | eager | 1.242 | 0.737 | 0.406 | 246.2 | 3.59 GiB |
+| Polars | eager | 0.384 | 0.485 | 0.447 | 223.9 | 5.56 GiB |
+| DuckDB | lazy generated SQL | 1.450 | 1.218 | 1.220 | 81.9 | 3.37 GiB |
+| Dask | 64 delayed partitions | 0.352 | 0.564 | 0.567 | 176.4 | 0.74 GiB |
+| Spark | `spark.range`, 64 partitions | 2.531 | 1.102 | 0.211 | 472.9 | 0.20 GiB Python + 0.91 GiB JVM |
+
+Five-million-row full-check profile:
+
+| Engine | IQR quantiles | Setup/build or plan (s) | First call (s) | Median (s) | Logical M rows/s | Process high-water RSS |
+|---|---|---:|---:|---:|---:|---:|
+| Pandas | exact | 0.272 | 0.475 | 0.473 | 10.58 | 1.06 GiB |
+| Polars | exact | 0.084 | 0.185 | 0.176 | 28.43 | 0.99 GiB |
+| DuckDB | exact | 0.333 | 0.763 | 0.728 | 6.87 | 1.89 GiB |
+| Dask | approximate | 0.313 | 2.435 | 2.341 | 2.14 | 0.82 GiB |
+| Spark | approximate, 0.001 relative error | 2.569 | 5.227 | 2.549 | 1.96 | 0.20 GiB Python + 3.24 GiB JVM |
+
+Setup includes the selected engine import and runtime startup. The Qualipilot
+module import occurs after setup and is not timed; checker initialization is
+recorded separately in the JSON output and excluded from check times.
+High-water RSS covers the process lifetime, including all imports and setup.
+Logical rows/s is dataset rows divided by wall time, not physical scan
+throughput: the full profile performs multiple engine actions. Eager and lazy
+sources have different materialization costs, and the lazy sources were not
+cached. These synthetic, CPU-local results are a correctness-backed workload
+comparison, not an engine ranking or production SLA.
+
+### Record-linkage schema and performance
+
+The deterministic seed-7 dataset used the following schema. One percent of
+base rows received a second record with one selected name character set to
+`q` and the same postcode/DOB.
+
+| Column | Type | Generation |
+|---|---|---|
+| `id` | integer | unique base and duplicate-record identifier |
+| `name` | string | 12 lowercase ASCII characters; planted duplicate sets one selected character to `q` |
+| `postcode` | string | base value is zero-padded `PC` plus `id % 2000`; planted duplicate copies its source value; used for blocking |
+| `dob` | integer | seeded uniform year from 1950 through 2004 |
+
+The timed region includes `RecordLinker` construction and execution, so Pandas
+normalization is included. Each cell used one discarded warm-up and three
+measured trials. Every cell asserted candidates, matched pairs, cluster count,
+full membership, and 100% recovery of the planted duplicates.
+
+| Base rows | Input | Compute | Candidates | Planted recall | Median (ms) |
+|---:|---|---|---:|---:|---:|
+| 5,000 | Pandas | Polars | 4,133 | 50/50 | 14.9 |
+| 5,000 | Pandas | DuckDB | 4,133 | 50/50 | 24.7 |
+| 5,000 | Polars | Polars | 4,133 | 50/50 | 14.8 |
+| 5,000 | Polars | DuckDB | 4,133 | 50/50 | 23.5 |
+| 25,000 | Pandas | Polars | 147,145 | 250/250 | 257.8 |
+| 25,000 | Pandas | DuckDB | 147,145 | 250/250 | 237.2 |
+| 25,000 | Polars | Polars | 147,145 | 250/250 | 257.5 |
+| 25,000 | Polars | DuckDB | 147,145 | 250/250 | 238.0 |
+| 100,000 | Pandas | Polars | 2,500,242 | 1,000/1,000 | 1,914.1 |
+| 100,000 | Pandas | DuckDB | 2,500,242 | 1,000/1,000 | 1,182.3 |
+| 100,000 | Polars | Polars | 2,500,242 | 1,000/1,000 | 1,993.3 |
+| 100,000 | Polars | DuckDB | 2,500,242 | 1,000/1,000 | 1,199.9 |
+
+All eight 5,000- and 25,000-row cells returned `fit_status="warning"`
+because EM did not converge within 15 iterations; all four 100,000-row cells
+returned `fit_status="ok"`. `PASS` above means the structural and recovery
+assertions passed, not that a warning fit is production-approved. Consolidation
+rejects warning fits by default.
+
+This planted synthetic evaluation validates the pipeline and scaling path; it
+does not establish accuracy, calibration, fairness, or a universal threshold
+for real identities.
+
+### NER schema and performance
+
+`en_core_web_sm` 3.8.0 with spaCy 3.8.16 was evaluated against eight retained
+English documents containing 17 hand-labeled exact character spans and labels.
+It returned 14 true positives, three false positives, and three false
+negatives: precision, recall, and F1 were each 0.823529. Model load took 0.690
+seconds. Five measured trials over a deterministic 5,000-short-document list
+produced a median 1,866.8 documents/second and 407 MiB process high-water RSS.
+The tiny corpus is an interface smoke, not a production model-quality claim;
+use a versioned domain/language holdout and per-label gates. The benchmark
+records the installed model version, but the model artifact is caller-managed
+and is not locked by Qualipilot's project dependencies.
+
+### Lambda-handler schema and performance
+
+The local handler workload was a 5,000,000-row, 69.46 MiB CSV with three
+integer columns: `id` as row index, `amount = id % 1000`, and
+`quantity = id % 100`. Seven checks ran with duplicate subset
+`[amount, quantity]` and range rules of 0–899 and 10–89 respectively.
+
+The real Lambda handler and real Polars checker ran in a fresh child process
+with eight Polars workers. Module import took 0.281 seconds, the first handler
+call after import took 3.243 seconds, and five post-warm-up trials had a 3.369
+second median (1.484 million logical rows/second). Worker-lifetime high-water
+RSS was 0.96 GiB; input generation ran in the parent and was excluded.
+
+This is not an AWS Lambda cold-start or S3 benchmark. The retained test double
+uses local `copyfile` for download and an in-memory upload, with no boto3,
+network, TLS, Runtime Interface Emulator, cgroup, or AWS service. The freshly
+generated source may be OS-cache-hot. Use a deployed load/recovery exercise to
+establish Lambda memory, duration, concurrency, IAM, alarm, and availability
+objectives.
+
+Reproduce the benchmark matrix from a Spark-enabled environment:
 
 ```bash
-python scripts/bench_spark.py
+for engine in pandas polars duckdb dask spark; do
+  python scripts/bench_checker.py \
+    --engine "$engine" --profile ranges \
+    --output "reports/ranges-$engine.json"
+  python scripts/bench_checker.py \
+    --engine "$engine" --profile full \
+    --output "reports/full-$engine.json"
+done
+
+python scripts/bench_linking.py --trials 3 \
+  --output reports/linking.json
+python scripts/bench_ner.py --model en_core_web_sm --docs 5000 --trials 5 \
+  --output reports/ner.json
+python scripts/bench_lambda.py --rows 5000000 --threads 8 --trials 5 \
+  --output reports/lambda.json
 ```
 
-The recorded run used a Ryzen 7 7700X host with 30.53 GiB RAM, Python 3.12.13,
-Java 21.0.11, Spark 4.0.0, `local[8]`, and 64 partitions. `spark.range`
-generated 100,000,000 rows and four columns lazily. Only the dataset contract
-and three range rules were enabled; there was no file I/O, cache, sampling, or
-LLM call. Every run asserted one row-count action and one batched range
-aggregation, with exact violation counts of 10,000,000, 20,000,000, and
-20,000,000.
-
-The cold quality-check wall time was 1.253 seconds. Five measured warm trials
-were 0.286, 0.248, 0.209, 0.184, and 0.200 seconds (median 0.209 seconds).
-After the cold run, one warm-up, and five trials, Linux reported a 1.02 GiB
-Spark JVM high-water RSS and 198 MiB Python high-water RSS. These unusually
-fast figures measure a synthetic, CPU-local aggregate with no storage or
-network I/O; they are not a 100-million-row production SLA.
-
-### Statistical smoke evaluations
-
-On the FEBRL4 reference corpus (5,000 left records, 5,000 right records, and
-5,000 known links), postcode/DOB/SSN blocking reduced 25 million possible
-pairs to 30,021 candidates. The model compared fuzzy given name, surname, and
-suburb plus exact street number and state. At a 0.9 threshold, both linkage
-backends produced 4,905 true positives, no false positives, and 95 false
-negatives: precision 1.000, recall 0.981, and F1 0.9904. Polars took 94 ms and
-DuckDB 201 ms after data loading. This validates the evaluation path on one
-reference corpus, not a universal threshold or accuracy claim.
-
-An `en_core_web_sm` 3.8.0 interface smoke used eight hand-labeled documents
-with 17 spans: 14 true positives, three false positives, and three false
-negatives (precision/recall/F1 0.8235). A 5,000-short-document batching run
-processed 1,042 documents/second. The sample is intentionally too small for a
-model-quality claim; production NER requires a versioned, representative
-domain holdout and per-label gates.
-
-### Lambda container smoke and capacity run
-
-The final Lambda image passed real-handler/fake-S3 processing, cached replay,
-Runtime Interface Emulator startup, dependency checks, and a Trivy 0.70.0 scan
-with zero known fixed HIGH or CRITICAL findings. A local 2 GiB cgroup run
-processed a synthetic 5,000,000-row, 87.8 MB CSV through seven checks in 4.328
-seconds, peaking at 1.70 GB cgroup memory. This is a local upper-envelope test,
-not AWS cold-start, concurrency, billing, or availability evidence; select
-Lambda memory and input limits from representative data.
-
-Reproduce the automated portions with:
+Reproduce the non-LLM verification:
 
 ```bash
-make check
-python -m pytest -q tests/test_lambda_handler.py
+python -m pytest -q --ignore=tests/test_llm.py -k 'not llm' --no-cov
+ruff check .
+ruff format --check .
+mypy src/qualipilot
 terraform -chdir=deploy/terraform init -backend=false -lockfile=readonly
+terraform -chdir=deploy/terraform validate
 terraform -chdir=deploy/terraform test
 ```
 
