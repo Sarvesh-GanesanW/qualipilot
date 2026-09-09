@@ -358,9 +358,7 @@ def _foreign_key_count(  # noqa: C901, PLR0912, PLR0915
                 )
             ]
         ).unique()
-        missing = engine._df.join(
-            right, on=rule.columns, how="anti", nulls_equal=False
-        )
+        missing = engine._df.join(right, on=rule.columns, how="anti")
         if rule.nulls_pass:
             missing = missing.filter(
                 pl.all_horizontal(
