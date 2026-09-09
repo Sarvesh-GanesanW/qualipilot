@@ -24,39 +24,76 @@ class PolarsEngine(Engine):
 
     name = "polars"
 
-    def __init__(self, df: pl.DataFrame) -> None:
+    def __init__(
+        self, df: pl.DataFrame, *, allow_nested: bool = False
+    ) -> None:
         validate_column_names(df.columns)
-        reject_nested_columns(
-            [
-                column
-                for column, dtype in df.schema.items()
-                if dtype.is_nested() or dtype == pl.Object
-            ]
-        )
+        nested = [
+            column
+            for column, dtype in df.schema.items()
+            if dtype.is_nested()
+            or (
+                dtype == pl.Object
+                and bool(
+                    df.select(
+                        pl.col(column)
+                        .map_elements(
+                            lambda value: isinstance(
+                                value, dict | list | tuple
+                            ),
+                            return_dtype=pl.Boolean,
+                        )
+                        .any()
+                    ).item()
+                )
+            )
+        ]
+        self.nested_normalized_columns = nested if allow_nested else []
+        if allow_nested and nested:
+            df = df.with_columns(
+                pl.col(column).map_elements(
+                    _nested_json, return_dtype=pl.String
+                )
+                for column in nested
+            )
+        elif not allow_nested:
+            reject_nested_columns(
+                [
+                    column
+                    for column, dtype in df.schema.items()
+                    if dtype.is_nested() or dtype == pl.Object
+                ]
+            )
         self._df = df
 
     # ---- constructors --------------------------------------------------
 
     @classmethod
-    def from_any(cls, data: Any) -> PolarsEngine:
+    def from_any(
+        cls, data: Any, *, allow_nested: bool = False
+    ) -> PolarsEngine:
         """Build from a Polars/Pandas dataframe or a filesystem path."""
         if isinstance(data, pl.DataFrame):
-            return cls(data)
+            return cls(data, allow_nested=allow_nested)
         if isinstance(data, pl.LazyFrame):
-            return cls(data.collect())
+            return cls(data.collect(), allow_nested=allow_nested)
         # convert pandas lazily so we do not import when unused
         if type(data).__module__.startswith("pandas"):
-            validate_pandas_columns(data)
-            return cls(pl.from_pandas(data))
+            if not allow_nested:
+                validate_pandas_columns(data)
+            return cls(pl.from_pandas(data), allow_nested=allow_nested)
         if type(data).__module__.startswith("pyarrow"):
             frame = pl.from_arrow(data)
             if isinstance(frame, pl.Series):
                 raise TypeError(
                     f"cannot build PolarsEngine from {type(data).__name__}"
                 )
-            return cls(frame)
+            return cls(frame, allow_nested=allow_nested)
         if isinstance(data, str | Path):
-            return cls(_read_path(Path(data)))
+            return cls(
+                _read_path(Path(data), allow_nested=allow_nested),
+                allow_nested=allow_nested,
+            )
         raise TypeError(
             f"cannot build PolarsEngine from {type(data).__name__}"
         )
@@ -267,7 +304,20 @@ class PolarsEngine(Engine):
         return keys.is_duplicated()
 
 
-def _read_path(path: Path) -> pl.DataFrame:
+def _nested_json(value: Any) -> str | None:
+    """Serialize containers while preserving scalar object cells verbatim."""
+    if value is None:
+        return None
+    if isinstance(value, pl.Series):
+        value = value.to_list()
+    if isinstance(value, dict | list | tuple):
+        import json
+
+        return json.dumps(value, sort_keys=True, separators=(",", ":"))
+    return str(value) if not isinstance(value, str) else value
+
+
+def _read_path(path: Path, *, allow_nested: bool = False) -> pl.DataFrame:
     """Dispatch file readers based on extension."""
     suffix = path.suffix.lower()
     if suffix == ".csv":
@@ -276,7 +326,11 @@ def _read_path(path: Path) -> pl.DataFrame:
     if suffix in {".parquet", ".pq"}:
         return pl.read_parquet(path)
     if suffix in {".ndjson", ".jsonl"}:
-        scalar_types = require_valid_json_lines(path)
+        scalar_types = require_valid_json_lines(
+            path, allow_nested=allow_nested
+        )
+        if allow_nested:
+            return pl.read_ndjson(path, infer_schema_length=None)
         dtypes = {
             "string": pl.String,
             "integer": pl.Int64,

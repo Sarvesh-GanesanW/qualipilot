@@ -18,17 +18,24 @@ from qualipilot.checks import (
     DataTypesCheck,
     DuplicatesCheck,
     FreshnessCheck,
+    IcebergTableCheck,
     LinkageCheck,
     MissingValuesCheck,
     OutliersCheck,
+    QualityContractCheck,
     RangesCheck,
 )
+from qualipilot.checks.registry import RegisteredCheckAdapter
 from qualipilot.engines import build_engine
 from qualipilot.engines._file_formats import safe_source_name
 from qualipilot.engines.base import (
     validate_column_names as _validate_column_names,
 )
-from qualipilot.models.config import QualipilotConfig, ReportFormat
+from qualipilot.models.config import (
+    IcebergTableConfig,
+    QualipilotConfig,
+    ReportFormat,
+)
 from qualipilot.models.results import (
     CheckResult,
     DatasetStats,
@@ -74,8 +81,15 @@ class DataQualityChecker:
         source_version: str | None = None,
         spark_session: SparkSession | None = None,
         duckdb_connection: DuckDBPyConnection | None = None,
+        references: dict[str, Any] | None = None,
+        _iceberg_factory: bool = False,
     ) -> None:
         self.config = config or QualipilotConfig()
+        if self.config.iceberg is not None and not _iceberg_factory:
+            raise ValueError(
+                "Iceberg table contracts require "
+                "DataQualityChecker.from_iceberg"
+            )
         if (
             isinstance(data, str | Path)
             and self.config.output_path is not None
@@ -98,7 +112,40 @@ class DataQualityChecker:
             kind=self.config.engine,
             spark_session=spark_session,
             duckdb_connection=duckdb_connection,
+            allow_nested=self.config.checks.allow_nested,
         )
+        self._references: dict[str, Engine] = {}
+        reference_connection = duckdb_connection or getattr(
+            self.engine, "_con", None
+        )
+        if (
+            references
+            and self.engine.name == "duckdb"
+            and reference_connection is None
+        ):
+            _close_engine(self.engine)
+            raise ValueError(
+                "DuckDB references for a borrowed relation require the "
+                "caller-owned duckdb_connection used to create that relation"
+            )
+        try:
+            for name, frame in (references or {}).items():
+                if not name or name.strip() != name:
+                    raise ValueError(
+                        "reference names must not be blank or padded"
+                    )
+                self._references[name] = build_engine(
+                    frame,
+                    kind=self.engine.name,
+                    spark_session=spark_session,
+                    duckdb_connection=reference_connection,
+                    allow_nested=self.config.checks.allow_nested,
+                )
+        except Exception:
+            for reference in self._references.values():
+                _close_engine(reference)
+            _close_engine(self.engine)
+            raise
         if self.config.checks.linkage is not None and self.engine.name not in {
             "polars",
             "pandas",
@@ -117,11 +164,78 @@ class DataQualityChecker:
             safe_source_name(raw_source) if raw_source is not None else None
         )
         self._source_version = source_version
+        self._iceberg_snapshot_id: int | None = None
+        self._iceberg_table: Any = None
+        self._iceberg_schema: dict[str, str] | None = None
         logger.info(
             "initialised checker with %s engine",
             self.engine.name,
             extra={"engine": self.engine.name},
         )
+
+    @classmethod
+    def from_iceberg(
+        cls,
+        identifier: str,
+        *,
+        spark_session: SparkSession,
+        config: QualipilotConfig | None = None,
+        snapshot_id: int | None = None,
+        references: dict[str, Any] | None = None,
+    ) -> DataQualityChecker:
+        """Bind a quality run to one read-only Iceberg snapshot."""
+        if spark_session is None:
+            raise ValueError("from_iceberg requires spark_session")
+        supplied = config or QualipilotConfig(engine="spark")
+        iceberg = supplied.iceberg or IcebergTableConfig(identifier=identifier)
+        if iceberg.identifier != identifier:
+            raise ValueError("config.iceberg.identifier must match identifier")
+        if supplied.engine not in {"auto", "spark"}:
+            raise ValueError("from_iceberg requires the spark engine")
+        effective = supplied.model_copy(
+            update={"engine": "spark", "iceberg": iceberg}
+        )
+        try:
+            jvm = spark_session._jvm
+            if jvm is None:
+                raise RuntimeError("Spark JVM is unavailable")
+            spark_util = jvm.org.apache.iceberg.spark.Spark3Util
+            table = spark_util.loadIcebergTable(
+                spark_session._jsparkSession, identifier
+            )
+        except Exception as exc:
+            raise ValueError(
+                f"could not load Iceberg table {identifier!r}"
+            ) from exc
+        snapshot = (
+            table.snapshot(snapshot_id)
+            if snapshot_id is not None
+            else table.currentSnapshot()
+        )
+        if snapshot is None:
+            raise ValueError("Iceberg table has no snapshot to validate")
+        captured_id = int(snapshot.snapshotId())
+        frame = (
+            spark_session.read.format("iceberg")
+            .option("snapshot-id", captured_id)
+            .load(identifier)
+        )
+        checker = cls(
+            frame,
+            effective,
+            source=identifier,
+            source_version=str(captured_id),
+            spark_session=spark_session,
+            references=references,
+            _iceberg_factory=True,
+        )
+        checker._iceberg_snapshot_id = captured_id
+        checker._iceberg_table = table
+        checker._iceberg_schema = {
+            field.name: field.dataType.simpleString()
+            for field in frame.schema.fields
+        }
+        return checker
 
     def run(self, *, include_llm: bool = True) -> QualityReport:
         """Run every enabled check and return the aggregate report."""
@@ -135,6 +249,11 @@ class DataQualityChecker:
             row_count=row_count,
             columns=columns,
             dtypes=dtypes,
+            references=self._references,
+            iceberg=self.config.iceberg,
+            iceberg_snapshot_id=self._iceberg_snapshot_id,
+            iceberg_table=self._iceberg_table,
+            iceberg_schema=self._iceberg_schema,
         )
         results: list[CheckResult] = []
         for check in self._build_check_list():
@@ -166,6 +285,9 @@ class DataQualityChecker:
             engine=self.engine.name,
             source=self._source,
             source_version=self._source_version,
+            nested_normalized_columns=getattr(
+                self.engine, "nested_normalized_columns", []
+            ),
         )
 
         report = QualityReport(
@@ -199,9 +321,9 @@ class DataQualityChecker:
 
     def close(self) -> None:
         """Release resources owned by the selected engine."""
-        close = getattr(self.engine, "close", None)
-        if callable(close):
-            close()
+        for reference in self._references.values():
+            _close_engine(reference)
+        _close_engine(self.engine)
 
     def __enter__(self) -> DataQualityChecker:
         return self
@@ -214,22 +336,28 @@ class DataQualityChecker:
     def _build_check_list(self) -> list[Check]:
         cfg = self.config.checks
         checks: list[Check] = [DatasetContractCheck()]
-        if cfg.missing_values:
-            checks.append(MissingValuesCheck())
-        if cfg.duplicates:
-            checks.append(DuplicatesCheck())
-        if cfg.data_types:
-            checks.append(DataTypesCheck())
-        if cfg.outliers:
-            checks.append(OutliersCheck())
-        if cfg.ranges:
-            checks.append(RangesCheck())
-        if cfg.cardinality:
-            checks.append(CardinalityCheck())
-        if cfg.freshness:
-            checks.append(FreshnessCheck())
+        checks.extend(
+            check_type()
+            for enabled, check_type in (
+                (cfg.missing_values, MissingValuesCheck),
+                (cfg.duplicates, DuplicatesCheck),
+                (cfg.data_types, DataTypesCheck),
+                (cfg.outliers, OutliersCheck),
+                (cfg.ranges, RangesCheck),
+                (cfg.cardinality, CardinalityCheck),
+                (cfg.freshness, FreshnessCheck),
+            )
+            if enabled
+        )
         if cfg.linkage is not None:
             checks.append(LinkageCheck())
+        if cfg.quality_contract and cfg.rule_packs:
+            checks.append(QualityContractCheck())
+        if self.config.iceberg is not None:
+            checks.append(IcebergTableCheck())
+        checks.extend(
+            RegisteredCheckAdapter(name) for name in cfg.registered_checks
+        )
         return checks
 
     def _maybe_render_llm_report(
@@ -287,6 +415,13 @@ class DataQualityChecker:
                 "report_format": effective_format,
             },
         )
+
+
+def _close_engine(engine: Engine) -> None:
+    """Close an engine only when it owns a closable resource."""
+    close = getattr(engine, "close", None)
+    if callable(close):
+        close()
 
 
 def write_text_atomic(path: str | Path, payload: str) -> None:

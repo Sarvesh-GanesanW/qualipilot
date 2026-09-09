@@ -42,7 +42,9 @@ class DaskEngine(Engine):
 
     name = "dask"
 
-    def __init__(self, df: dd.DataFrame) -> None:
+    def __init__(
+        self, df: dd.DataFrame, *, allow_nested: bool = False
+    ) -> None:
         validate_column_names(list(df.columns))
         unsupported_dtypes = [
             f"{column} ({dtype})"
@@ -61,6 +63,30 @@ class DaskEngine(Engine):
             self._object_families,
             unsupported_object_columns,
         ) = _inspect_object_columns(df)
+        nested_columns = [
+            *[
+                column
+                for column, dtype in df.dtypes.items()
+                if is_nested_arrow_dtype(dtype)
+            ],
+            *nested_object_columns,
+        ]
+        self.nested_normalized_columns = nested_columns if allow_nested else []
+        if allow_nested and nested_columns:
+            meta = df._meta.copy()
+            for column in nested_columns:
+                meta[column] = pd.Series(dtype="object")
+            df = df.map_partitions(  # type: ignore[no-untyped-call]
+                _normalise_nested_partition,
+                nested_columns,
+                meta=meta,
+            )
+            (
+                nested_object_columns,
+                self._object_families,
+                unsupported_object_columns,
+            ) = _inspect_object_columns(df)
+            nested_object_columns = []
         reject_nested_columns(
             [
                 *[
@@ -81,17 +107,21 @@ class DaskEngine(Engine):
         self._df = df
 
     @classmethod
-    def from_any(cls, data: Any, *, npartitions: int = 4) -> DaskEngine:
+    def from_any(  # noqa: C901
+        cls, data: Any, *, npartitions: int = 4, allow_nested: bool = False
+    ) -> DaskEngine:
         if isinstance(data, dd.DataFrame):
-            return cls(data)
+            return cls(data, allow_nested=allow_nested)
         if isinstance(data, pd.DataFrame):
-            validate_pandas_columns(data)
+            if not allow_nested:
+                validate_pandas_columns(data)
             with dask.config.set({"dataframe.convert-string": False}):
                 return cls(
                     dd.from_pandas(  # type: ignore[no-untyped-call]
                         data,
                         npartitions=npartitions,
-                    )
+                    ),
+                    allow_nested=allow_nested,
                 )
         if type(data).__module__.startswith("polars"):
             with dask.config.set({"dataframe.convert-string": False}):
@@ -99,12 +129,14 @@ class DaskEngine(Engine):
                     dd.from_pandas(  # type: ignore[no-untyped-call]
                         data.to_pandas(),
                         npartitions=npartitions,
-                    )
+                    ),
+                    allow_nested=allow_nested,
                 )
         if type(data).__module__.startswith("pyarrow"):
             return cls.from_any(
                 data.to_pandas(),
                 npartitions=npartitions,
+                allow_nested=allow_nested,
             )
         if isinstance(data, str | Path):
             raw = str(data)
@@ -120,30 +152,34 @@ class DaskEngine(Engine):
                         keep_default_na=False,
                         na_values=[""],
                         skip_blank_lines=False,
-                    )
+                    ),
+                    allow_nested=allow_nested,
                 )
             if suffix in {".parquet", ".pq"}:
-                return cls(dd.read_parquet(raw))
+                return cls(dd.read_parquet(raw), allow_nested=allow_nested)
             if suffix in {".jsonl", ".ndjson"}:
-                scalar_types = require_valid_json_lines(raw)
-                dtypes = {
-                    "string": "string",
-                    "integer": "Int64",
-                    "number": "Float64",
-                    "boolean": "boolean",
+                scalar_types = require_valid_json_lines(
+                    raw, allow_nested=allow_nested
+                )
+                kwargs: dict[str, Any] = {
+                    "lines": True,
+                    "blocksize": 64 * 1024 * 1024,
+                    "convert_dates": False,
                 }
+                if not allow_nested:
+                    dtypes = {
+                        "string": "string",
+                        "integer": "Int64",
+                        "number": "Float64",
+                        "boolean": "boolean",
+                    }
+                    kwargs["dtype"] = {
+                        column: dtypes[family]
+                        for column, family in scalar_types.items()
+                    }
                 with dask.config.set({"dataframe.convert-string": False}):
                     return cls(
-                        dd.read_json(
-                            raw,
-                            lines=True,
-                            blocksize=64 * 1024 * 1024,
-                            dtype={
-                                column: dtypes[family]
-                                for column, family in scalar_types.items()
-                            },
-                            convert_dates=False,
-                        )
+                        dd.read_json(raw, **kwargs), allow_nested=allow_nested
                     )
             raise ValueError(f"unsupported file type: {suffix}")
         raise TypeError(f"cannot build DaskEngine from {type(data).__name__}")
@@ -438,6 +474,24 @@ def _object_stats(series: Any) -> Any:
         )
 
     return series.map_partitions(inspect_partition, meta=meta)
+
+
+def _normalise_nested_partition(
+    frame: pd.DataFrame, columns: list[str]
+) -> pd.DataFrame:
+    """Serialize selected nested cells without altering scalar values."""
+    import json
+
+    normalised = frame.copy()
+    for column in columns:
+        normalised[column] = normalised[column].map(
+            lambda value: (
+                json.dumps(value, sort_keys=True, separators=(",", ":"))
+                if isinstance(value, dict | list | tuple)
+                else value
+            )
+        )
+    return normalised
 
 
 def _portable_object_families(families: set[str]) -> bool:

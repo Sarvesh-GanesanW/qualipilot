@@ -1,0 +1,20 @@
+engine: pandas
+checks:
+  missing_values: false
+  duplicates: false
+  data_types: false
+  outliers: false
+  ranges: false
+  cardinality: false
+  rule_packs:
+    - name: orders-v1
+      comparisons:
+        - name: end-after-start
+          left_column: end
+          operator: ge
+          right_column: start
+      schema_policy:
+        columns:
+          id: int64
+          start: int64
+          end: int64

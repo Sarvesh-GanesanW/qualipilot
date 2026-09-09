@@ -1,15 +1,21 @@
 # qualipilot
 
-Qualipilot runs configurable data-quality checks, probabilistic record
-linkage, and named-entity extraction over tabular data. Quality checks return
+Qualipilot runs versioned data-quality contracts over tabular data. Optional
+record linkage, named-entity extraction, LLM narratives, and Lambda helpers
+remain compatible add-ons. Quality checks return
 typed JSON, HTML, or Markdown reports. CSV, Parquet, JSONL, and NDJSON are
 supported across several dataframe backends. Columns must contain scalar
-values; flatten nested arrays, maps, and objects before checking.
+values by default. With `checks.allow_nested: true`, Pandas, Polars, and
+Dask use canonical JSON; Spark and DuckDB use native JSON with
+runtime-dependent map key ordering. Nested leaf rules are not yet portable.
 LLM-generated narrative is optional and disabled by default.
 
 The project is beta software. Validate check semantics and performance
 against representative data before using report severities as a release
 gate.
+
+See [quality contracts](https://github.com/Sarvesh-GanesanW/qualipilot/blob/main/docs/QUALITY_CONTRACTS.md) for rule packs, named
+custom checks, caller-owned references, typed payload access, and metrics.
 
 ## Install
 

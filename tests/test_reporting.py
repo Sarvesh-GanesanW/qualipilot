@@ -386,3 +386,21 @@ def _single_result_report(result: CheckResult) -> QualityReport:
         ),
         results=[result],
     )
+
+
+def test_report_nested_normalisation_field_is_backward_compatible() -> None:
+    report = _single_result_report(
+        CheckResult(name="x", severity="ok", duration_seconds=0)
+    )
+    report.dataset.nested_normalized_columns = ["nested"]
+    loaded = QualityReport.from_json(report.to_json())
+    assert loaded.schema_version == "1.0"
+    assert loaded.dataset.nested_normalized_columns == ["nested"]
+    legacy = json.loads(report.to_json())
+    del legacy["dataset"]["nested_normalized_columns"]
+    assert (
+        QualityReport.from_json(
+            json.dumps(legacy)
+        ).dataset.nested_normalized_columns
+        == []
+    )

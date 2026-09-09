@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, get_args
 from urllib.parse import urlparse
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -49,15 +49,10 @@ BuiltInCheckName = Literal[
     "cardinality",
     "freshness",
     "linkage",
+    "quality_contract",
+    "iceberg_table",
 ]
-
-
-class _DuplicateConfigKeyError(ValueError):
-    pass
-
-
-class _UniqueKeyLoader(yaml.SafeLoader):
-    pass
+ComparisonOperator = Literal["eq", "ne", "gt", "ge", "lt", "le"]
 
 
 class _StrictModel(BaseModel):
@@ -66,6 +61,186 @@ class _StrictModel(BaseModel):
         allow_inf_nan=False,
         hide_input_in_errors=True,
     )
+
+
+def _clean_contract_name(value: str, field: str) -> str:
+    if not value or value.strip() != value:
+        raise ValueError(f"{field} must not be blank or padded")
+    return value
+
+
+def _clean_contract_columns(values: list[str], field: str) -> list[str]:
+    if any(not value or value.strip() != value for value in values):
+        raise ValueError(f"{field} must not contain blank or padded names")
+    if len(values) != len(set(values)):
+        raise ValueError(f"{field} must not contain duplicates")
+    return values
+
+
+class ComparisonRule(_StrictModel):
+    """A portable, column-to-column comparison; values are never evaluated."""
+
+    name: str
+    left_column: str
+    operator: ComparisonOperator
+    right_column: str | None = None
+    right_value: str | int | float | bool | None = None
+    nulls_pass: bool = True
+
+    @field_validator("name", "left_column")
+    @classmethod
+    def _validate_names(cls, value: str, info: ValidationInfo) -> str:
+        return _clean_contract_name(value, info.field_name or "field")
+
+    @field_validator("right_column")
+    @classmethod
+    def _validate_right_column(cls, value: str | None) -> str | None:
+        return (
+            None
+            if value is None
+            else _clean_contract_name(value, "right_column")
+        )
+
+    @model_validator(mode="after")
+    def _require_one_right_operand(self) -> ComparisonRule:
+        if (self.right_column is None) == (self.right_value is None):
+            raise ValueError("set exactly one of right_column or right_value")
+        return self
+
+
+class ForeignKeyRule(_StrictModel):
+    """Composite foreign-key rule against a named caller-provided frame."""
+
+    name: str
+    columns: list[str] = Field(min_length=1)
+    reference: str
+    reference_columns: list[str] = Field(min_length=1)
+    nulls_pass: bool = True
+
+    @field_validator("name", "reference")
+    @classmethod
+    def _validate_names(cls, value: str, info: ValidationInfo) -> str:
+        return _clean_contract_name(value, info.field_name or "field")
+
+    @field_validator("columns", "reference_columns")
+    @classmethod
+    def _validate_columns(
+        cls, value: list[str], info: ValidationInfo
+    ) -> list[str]:
+        return _clean_contract_columns(value, info.field_name or "field")
+
+    @model_validator(mode="after")
+    def _matching_key_width(self) -> ForeignKeyRule:
+        if len(self.columns) != len(self.reference_columns):
+            raise ValueError(
+                "columns and reference_columns must have equal length"
+            )
+        return self
+
+
+class SchemaPolicy(_StrictModel):
+    """Explicit schema baseline policy for quality contracts."""
+
+    columns: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("columns")
+    @classmethod
+    def _validate_columns(cls, value: dict[str, str]) -> dict[str, str]:
+        normalized: dict[str, str] = {}
+        for column, dtype in value.items():
+            _clean_contract_name(column, "schema column")
+            _clean_contract_name(dtype, "schema dtype")
+            if column in normalized:
+                raise ValueError("schema columns must not contain duplicates")
+            normalized[column] = dtype
+        return normalized
+
+    allow_additions: bool = False
+    allow_removals: bool = False
+    allow_type_changes: bool = False
+
+
+class QualityContract(_StrictModel):
+    """Version-controlled rule pack evaluated by the quality-contract check."""
+
+    name: str
+    comparisons: list[ComparisonRule] = Field(default_factory=list)
+    foreign_keys: list[ForeignKeyRule] = Field(default_factory=list)
+    schema_policy: SchemaPolicy | None = None
+
+    @field_validator("name")
+    @classmethod
+    def _validate_name(cls, value: str) -> str:
+        return _clean_contract_name(value, "name")
+
+    @model_validator(mode="after")
+    def _validate_rule_names(self) -> QualityContract:
+        names = [rule.name for rule in self.comparisons]
+        names.extend(rule.name for rule in self.foreign_keys)
+        if "schema" in names:
+            raise ValueError("schema is reserved for the schema policy")
+        if len(names) != len(set(names)):
+            raise ValueError("contract rule names must be unique")
+        return self
+
+
+class IcebergTableConfig(_StrictModel):
+    """Read-only Iceberg thresholds for a caller-owned Spark session."""
+
+    identifier: str
+    max_snapshot_age_hours: float | None = Field(default=None, gt=0)
+    max_data_files: int | None = Field(default=None, ge=0)
+    max_delete_files: int | None = Field(default=None, ge=0)
+    max_active_partition_specs: int | None = Field(default=None, ge=1)
+    max_manifest_count: int | None = Field(default=None, ge=0)
+    expected_snapshot_id: int | None = Field(default=None, ge=0)
+    expected_ancestor_snapshot_id: int | None = Field(default=None, ge=0)
+    require_current_snapshot: bool = False
+    expected_schema_id: int | None = Field(default=None, ge=0)
+    expected_current_spec_id: int | None = Field(default=None, ge=0)
+    allowed_spec_ids: list[int] = Field(default_factory=list)
+    schema_policy: SchemaPolicy | None = None
+    file_probe_max_files: int = Field(default=0, ge=0, le=10_000)
+    file_probe_require_complete: bool = False
+    expected_dtypes: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("allowed_spec_ids")
+    @classmethod
+    def _unique_spec_ids(cls, value: list[int]) -> list[int]:
+        if len(value) != len(set(value)):
+            raise ValueError("allowed_spec_ids must be unique")
+        return value
+
+    @model_validator(mode="after")
+    def _validate_probe(self) -> IcebergTableConfig:
+        if self.file_probe_require_complete and not self.file_probe_max_files:
+            raise ValueError(
+                "file_probe_require_complete requires file_probe_max_files"
+            )
+        return self
+
+    @field_validator("identifier")
+    @classmethod
+    def _safe_identifier(cls, value: str) -> str:
+        parts = value.split(".")
+        if not parts or any(
+            not part
+            or not part.replace("_", "a").isalnum()
+            or not (part[0].isalpha() or part[0] == "_")
+            for part in parts
+        ):
+            raise ValueError(
+                "identifier must contain dot-separated identifiers"
+            )
+        return value
+
+
+class _DuplicateConfigKeyError(ValueError):
+    pass
+
+
+class _UniqueKeyLoader(yaml.SafeLoader):
+    pass
 
 
 class ColumnRange(_StrictModel):
@@ -96,6 +271,12 @@ class CheckConfig(_StrictModel):
     ranges: bool = True
     cardinality: bool = True
     freshness: bool = False
+    quality_contract: bool = True
+    # Keep the historical scalar default. Opt-in values are converted to
+    # deterministic JSON only for whole-column checks.
+    allow_nested: bool = False
+    rule_packs: list[QualityContract] = Field(default_factory=list)
+    registered_checks: list[str] = Field(default_factory=list)
     severity_overrides: dict[BuiltInCheckName, Severity] = Field(
         default_factory=dict
     )
@@ -193,6 +374,23 @@ class CheckConfig(_StrictModel):
     def _validate_embedded_linkage(self) -> CheckConfig:
         if self.linkage is not None and self.linkage.mode != "dedupe":
             raise ValueError("checks.linkage supports dedupe mode only")
+        names = [pack.name for pack in self.rule_packs]
+        if len(names) != len(set(names)):
+            raise ValueError("rule pack names must be unique")
+        registered = self.registered_checks
+        if any(not name or name.strip() != name for name in registered):
+            raise ValueError(
+                "registered check names must not be blank or padded"
+            )
+        if len(registered) != len(set(registered)):
+            raise ValueError("registered check names must be unique")
+        builtins = set(get_args(BuiltInCheckName))
+        collision = sorted(set(registered) & builtins)
+        if collision:
+            raise ValueError(
+                "registered check names cannot shadow built-ins: "
+                + ", ".join(collision)
+            )
         return self
 
 
@@ -333,12 +531,17 @@ class QualipilotConfig(BaseSettings):
 
     engine: EngineName = "auto"
     checks: CheckConfig = Field(default_factory=CheckConfig)
+    iceberg: IcebergTableConfig | None = None
     llm: LLMConfig = Field(default_factory=LLMConfig)
     output_path: Path | None = None
     report_format: ReportFormat = "json"
 
     @model_validator(mode="after")
     def _validate_engine_features(self) -> QualipilotConfig:
+        if self.iceberg is not None and self.engine not in {"auto", "spark"}:
+            raise ValueError(
+                "iceberg requires from_iceberg or the spark engine"
+            )
         if self.checks.linkage is not None and self.engine not in {
             "auto",
             "polars",

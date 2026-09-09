@@ -40,25 +40,42 @@ class SparkEngine(Engine):
 
     name = "spark"
 
-    def __init__(self, df: SparkDataFrame) -> None:
+    def __init__(
+        self, df: SparkDataFrame, *, allow_nested: bool = False
+    ) -> None:
         validate_column_names(list(df.columns))
-        reject_nested_columns(
-            [
-                field.name
-                for field in df.schema.fields
-                if field.dataType.typeName()
-                in {"array", "map", "struct", "variant"}
-            ]
+        nested = [
+            field
+            for field in df.schema.fields
+            if field.dataType.typeName()
+            in {"array", "map", "struct", "variant"}
+        ]
+        self.nested_normalized_columns = (
+            [field.name for field in nested] if allow_nested else []
         )
+        if allow_nested and nested:
+            from pyspark.sql import functions as f
+
+            df = df.select(
+                *[
+                    f.to_json(f.col(field.name)).alias(field.name)
+                    if field in nested
+                    else f.col(field.name)
+                    for field in df.schema.fields
+                ]
+            )
+        else:
+            reject_nested_columns([field.name for field in nested])
         self._df = df
 
     @classmethod
-    def from_any(
+    def from_any(  # noqa: C901
         cls,
         data: Any,
         *,
         spark_session: SparkSession | None = None,
         spark: SparkSession | None = None,
+        allow_nested: bool = False,
     ) -> SparkEngine:
         """Build a Spark engine from a DataFrame or file path.
 
@@ -93,12 +110,14 @@ class SparkEngine(Engine):
                 raise ValueError(
                     "Spark DataFrame belongs to a different Spark session"
                 )
-            return cls(data)
+            return cls(data, allow_nested=allow_nested)
         if isinstance(data, str | Path):
             raw = str(data)
             suffix = Path(raw).suffix.lower()
             if suffix in {".parquet", ".pq"}:
-                return cls(session.read.parquet(raw))
+                return cls(
+                    session.read.parquet(raw), allow_nested=allow_nested
+                )
             if suffix == ".csv":
                 _require_local_text_path(raw)
                 require_unique_csv_columns(Path(raw))
@@ -106,40 +125,45 @@ class SparkEngine(Engine):
                     session.read.option("header", True)
                     .option("inferSchema", True)
                     .option("mode", "FAILFAST")
-                    .csv(raw)
+                    .csv(raw),
+                    allow_nested=allow_nested,
                 )
             if suffix in {".jsonl", ".ndjson"}:
                 _require_local_text_path(raw)
-                scalar_types = require_valid_json_lines(Path(raw))
-                from pyspark.sql.types import (
-                    BooleanType,
-                    DoubleType,
-                    LongType,
-                    StringType,
-                    StructField,
-                    StructType,
+                scalar_types = require_valid_json_lines(
+                    Path(raw), allow_nested=allow_nested
                 )
+                reader = session.read.option("mode", "FAILFAST")
+                if not allow_nested:
+                    from pyspark.sql.types import (
+                        BooleanType,
+                        DoubleType,
+                        LongType,
+                        StringType,
+                        StructField,
+                        StructType,
+                    )
 
-                dtypes = {
-                    "string": StringType,
-                    "integer": LongType,
-                    "number": DoubleType,
-                    "boolean": BooleanType,
-                }
-                schema = StructType(
-                    [
-                        StructField(column, dtypes[family](), True)
-                        for column, family in scalar_types.items()
-                    ]
-                )
-                return cls(
-                    session.read.schema(schema)
-                    .option("mode", "FAILFAST")
-                    .json(raw)
-                )
+                    dtypes = {
+                        "string": StringType,
+                        "integer": LongType,
+                        "number": DoubleType,
+                        "boolean": BooleanType,
+                    }
+                    reader = reader.schema(
+                        StructType(
+                            [
+                                StructField(column, dtypes[family](), True)
+                                for column, family in scalar_types.items()
+                            ]
+                        )
+                    )
+                return cls(reader.json(raw), allow_nested=allow_nested)
             raise ValueError(f"unsupported file type: {suffix}")
         if type(data).__module__.startswith("pandas"):
-            return cls(session.createDataFrame(data))
+            return cls(
+                session.createDataFrame(data), allow_nested=allow_nested
+            )
         raise TypeError(f"cannot build SparkEngine from {type(data).__name__}")
 
     # ---- structural info ----------------------------------------------

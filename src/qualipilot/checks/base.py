@@ -24,6 +24,11 @@ class CheckContext:
     row_count: int | None = None
     columns: list[str] | None = None
     dtypes: dict[str, str] | None = None
+    references: dict[str, Engine] | None = None
+    iceberg: Any = None
+    iceberg_snapshot_id: int | None = None
+    iceberg_table: Any = None
+    iceberg_schema: dict[str, str] | None = None
 
 
 class Check(ABC):
