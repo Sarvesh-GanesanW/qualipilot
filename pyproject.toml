@@ -38,7 +38,7 @@ classifiers = [
 ]
 dependencies = [
     "polars>=1.20,<2",
-    "pandas>=2.2,<3",
+    "pandas>=3.0.5,<4",
     "numpy>=2.0,<2.5",
     "pyarrow>=17.0,<26",
     "pydantic>=2.9,<3",
@@ -62,7 +62,7 @@ gz = [
     "httpx>=0.27,<1",
     "tenacity>=9.0,<10",
 ]
-spark = ["pyspark>=3.5.6,<4.3", "pandas>=2.2,<3"]
+spark = ["pyspark>=3.5.6,<4.3", "pandas>=3.0.5,<4"]
 all = [
     "boto3>=1.35,<2",
     "botocore>=1.35,<2",
@@ -70,7 +70,7 @@ all = [
     "rapidfuzz>=3.9,<4",
     "duckdb>=1.5.1,<2",
     "pyspark>=3.5.6,<4.3",
-    "pandas>=2.2,<3",
+    "pandas>=3.0.5,<4",
     "httpx>=0.27,<1",
     "tenacity>=9.0,<10",
     "spacy>=3.8.7,<4",
