@@ -1,5 +1,28 @@
 # Migrating from 2.x to 3.0
 
+## 3.5.0
+
+Quality contracts are additive. Put portable comparison, composite foreign-key,
+and schema baseline rules in `checks.rule_packs`; pass reference dataframes via
+`DataQualityChecker(..., references={...})`. Existing scalar-only behaviour
+remains the default. With `checks.allow_nested: true`, Pandas, Polars, and
+Dask use canonical JSON; Spark and DuckDB use native JSON whose map key order
+can vary by runtime.
+
+`CheckResult.payload` remains wire-compatible. Consumers can use
+`result.typed_payload()` for built-in contract and Iceberg payload validation,
+and `report.iter_metrics()` or `report.prometheus_text()` for source-redacted
+metrics.
+
+
+Use `DataQualityChecker.from_iceberg()` for Iceberg table contracts. It pins
+row checks and metadata to one caller-session snapshot and rejects tables with
+no snapshot. `expected_current_spec_id` checks the live default spec, while
+`allowed_spec_ids` and `max_active_partition_specs` apply to files active in
+the captured snapshot. Schema policies use the captured snapshot schema.
+Bounded file probes check existence and byte length only; they do not validate
+Parquet contents or checksums.
+
 Version 3 removes APIs that were untested or unused and tightens configuration
 at trust boundaries.
 

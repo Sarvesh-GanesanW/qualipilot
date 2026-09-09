@@ -18,6 +18,11 @@ from pyspark.sql import SparkSession
 from qualipilot import CheckConfig, DataQualityChecker, QualipilotConfig
 from qualipilot.checks import CheckContext, OutliersCheck
 from qualipilot.engines.spark_engine import SparkEngine
+from qualipilot.models.config import (
+    ComparisonRule,
+    ForeignKeyRule,
+    QualityContract,
+)
 
 
 @pytest.fixture(scope="module")
@@ -97,6 +102,55 @@ def test_spark_treats_nan_and_null_as_the_same_duplicate_key(
 
     assert engine.duplicate_count() == 2
     assert len(engine.sample_duplicates(10)) == 2
+
+
+def test_spark_quality_contract_uses_native_filters_and_antijoin(
+    spark: SparkSession,
+) -> None:
+    config = QualipilotConfig(
+        engine="spark",
+        checks=CheckConfig(
+            missing_values=False,
+            duplicates=False,
+            data_types=False,
+            outliers=False,
+            ranges=False,
+            cardinality=False,
+            rule_packs=[
+                QualityContract(
+                    name="orders",
+                    comparisons=[
+                        ComparisonRule(
+                            name="sequence",
+                            left_column="end",
+                            operator="ge",
+                            right_column="start",
+                        )
+                    ],
+                    foreign_keys=[
+                        ForeignKeyRule(
+                            name="customer",
+                            columns=["customer_id"],
+                            reference="customers",
+                            reference_columns=["id"],
+                        )
+                    ],
+                )
+            ],
+        ),
+    )
+    report = DataQualityChecker(
+        spark.createDataFrame(
+            [(1, 2, 1), (2, 1, 2)], "customer_id long, end long, start long"
+        ),
+        config,
+        spark_session=spark,
+        references={"customers": spark.createDataFrame([(1,)], "id long")},
+    ).run(include_llm=False)
+    result = next(
+        item for item in report.results if item.name == "quality_contract"
+    )
+    assert result.typed_payload().violation_count == 2
 
 
 def test_spark_rejects_nested_columns(spark: SparkSession) -> None:
@@ -267,3 +321,194 @@ def test_spark_rejects_remote_text_without_raw_validation(
 ) -> None:
     with pytest.raises(ValueError, match="remote CSV and JSONL"):
         SparkEngine.from_any(path, spark=spark)
+
+
+@pytest.mark.parametrize(
+    ("operator", "expected"),
+    [("eq", 1), ("ne", 1), ("gt", 2), ("ge", 1), ("lt", 1), ("le", 0)],
+)
+def test_spark_contract_comparison_operators_and_null_policy(
+    spark: SparkSession, operator: str, expected: int
+) -> None:
+    config = QualipilotConfig(
+        engine="spark",
+        checks=CheckConfig(
+            missing_values=False,
+            duplicates=False,
+            data_types=False,
+            outliers=False,
+            ranges=False,
+            cardinality=False,
+            rule_packs=[
+                QualityContract(
+                    name="operators",
+                    comparisons=[
+                        ComparisonRule(
+                            name="comparison",
+                            left_column="left",
+                            operator=operator,  # type: ignore[arg-type]
+                            right_column="right",
+                        )
+                    ],
+                )
+            ],
+        ),
+    )
+    report = DataQualityChecker(
+        spark.createDataFrame([(1, 1), (2, 3)], ["left", "right"]),
+        config,
+        spark_session=spark,
+    ).run(include_llm=False)
+    assert (
+        next(
+            item for item in report.results if item.name == "quality_contract"
+        )
+        .typed_payload()
+        .violation_count
+        == expected
+    )
+
+
+def test_spark_contract_quotes_dots_and_backticks_in_reference_keys(
+    spark: SparkSession,
+) -> None:
+    config = QualipilotConfig(
+        engine="spark",
+        checks=CheckConfig(
+            missing_values=False,
+            duplicates=False,
+            data_types=False,
+            outliers=False,
+            ranges=False,
+            cardinality=False,
+            rule_packs=[
+                QualityContract(
+                    name="quoted",
+                    comparisons=[
+                        ComparisonRule(
+                            name="comparison",
+                            left_column="x.y",
+                            operator="eq",
+                            right_column="x`z",
+                        )
+                    ],
+                    foreign_keys=[
+                        ForeignKeyRule(
+                            name="foreign",
+                            columns=["x.y", "x`z"],
+                            reference="reference",
+                            reference_columns=["r.x", "r`z"],
+                        )
+                    ],
+                )
+            ],
+        ),
+    )
+    report = DataQualityChecker(
+        spark.createDataFrame([(1, 1), (2, 3)], ["x.y", "x`z"]),
+        config,
+        spark_session=spark,
+        references={
+            "reference": spark.createDataFrame([(1, 1)], ["r.x", "r`z"])
+        },
+    ).run(include_llm=False)
+    assert (
+        next(
+            item for item in report.results if item.name == "quality_contract"
+        )
+        .typed_payload()
+        .violation_count
+        == 2
+    )
+
+
+def test_spark_nested_jsonl_is_opt_in_and_records_provenance(
+    spark: SparkSession, tmp_path: Path
+) -> None:
+    path = tmp_path / "events.jsonl"
+    path.write_text(
+        "\n".join(
+            [
+                '{"id":1,"nested":{"b":1,"a":2},"items":[2,1],"plain":"value"}',
+                '{"id":2,"nested":null,"items":null,"plain":"other"}',
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="only scalar"):
+        SparkEngine.from_any(path, spark_session=spark)
+    engine = SparkEngine.from_any(path, spark_session=spark, allow_nested=True)
+    assert engine.row_count() == 2
+    assert engine.nested_normalized_columns == ["items", "nested"]
+    assert [row.asDict() for row in engine._df.orderBy("id").collect()] == [
+        {
+            "id": 1,
+            "items": "[2,1]",
+            "nested": '{"a":2,"b":1}',
+            "plain": "value",
+        },
+        {"id": 2, "items": None, "nested": None, "plain": "other"},
+    ]
+    report = DataQualityChecker(
+        path,
+        QualipilotConfig(
+            engine="spark", checks=CheckConfig(allow_nested=True)
+        ),
+        spark_session=spark,
+    ).run(include_llm=False)
+    assert report.dataset.nested_normalized_columns == ["items", "nested"]
+
+
+@pytest.mark.parametrize("reference_has_nan", [False, True])
+@pytest.mark.parametrize(("nulls_pass", "expected"), [(True, 1), (False, 2)])
+def test_spark_foreign_key_treats_nan_as_missing_per_policy(
+    spark: SparkSession,
+    reference_has_nan: bool,
+    nulls_pass: bool,
+    expected: int,
+) -> None:
+    reference_rows = [(1.0,)]
+    if reference_has_nan:
+        reference_rows.append((float("nan"),))
+    config = QualipilotConfig(
+        engine="spark",
+        checks=CheckConfig(
+            missing_values=False,
+            duplicates=False,
+            data_types=False,
+            outliers=False,
+            ranges=False,
+            cardinality=False,
+            rule_packs=[
+                QualityContract(
+                    name="keys",
+                    foreign_keys=[
+                        ForeignKeyRule(
+                            name="key",
+                            columns=["key"],
+                            reference="reference",
+                            reference_columns=["id"],
+                            nulls_pass=nulls_pass,
+                        )
+                    ],
+                )
+            ],
+        ),
+    )
+    report = DataQualityChecker(
+        spark.createDataFrame([(1.0,), (float("nan"),), (2.0,)], "key double"),
+        config,
+        spark_session=spark,
+        references={
+            "reference": spark.createDataFrame(reference_rows, "id double")
+        },
+    ).run(include_llm=False)
+    assert (
+        next(
+            item for item in report.results if item.name == "quality_contract"
+        )
+        .typed_payload()
+        .violation_count
+        == expected
+    )

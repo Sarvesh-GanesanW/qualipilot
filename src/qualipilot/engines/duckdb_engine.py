@@ -40,6 +40,7 @@ class DuckDBEngine(Engine):
         view: str,
         *,
         relation: duckdb.DuckDBPyRelation | None = None,
+        allow_nested: bool = False,
     ) -> None:
         if (con is None) == (relation is None):
             raise ValueError("provide exactly one DuckDB source")
@@ -48,15 +49,34 @@ class DuckDBEngine(Engine):
         self._view = view
         self._dtypes_cache: dict[str, str] | None = None
         self._closed = False
+        self.nested_normalized_columns: list[str] = []
+        dtypes = self.dtypes()
+        nested = [
+            column
+            for column, dtype in dtypes.items()
+            if dtype.startswith(("STRUCT(", "MAP(", "UNION("))
+            or dtype.endswith("]")
+        ]
+        if nested and allow_nested:
+            source = (
+                relation
+                if relation is not None
+                else _connection_relation(con, view)
+            )
+            columns = ", ".join(
+                f"CAST(to_json({quote_identifier(column)}) AS VARCHAR) "
+                f"AS {quote_identifier(column)}"
+                if column in nested
+                else quote_identifier(column)
+                for column in dtypes
+            )
+            self._relation = source.project(columns)
+            self._view = "_qp_nested"
+            self._dtypes_cache = None
+            self.nested_normalized_columns = nested
+        else:
+            reject_nested_columns(nested)
         validate_column_names(list(self.dtypes()))
-        reject_nested_columns(
-            [
-                column
-                for column, dtype in self.dtypes().items()
-                if dtype.startswith(("STRUCT(", "MAP(", "UNION("))
-                or dtype.endswith("]")
-            ]
-        )
 
     @classmethod
     def from_any(
@@ -65,8 +85,9 @@ class DuckDBEngine(Engine):
         *,
         threads: int | None = None,
         duckdb_connection: duckdb.DuckDBPyConnection | None = None,
+        allow_nested: bool = False,
     ) -> DuckDBEngine:
-        _validate_source_columns(data)
+        _validate_source_columns(data, allow_nested=allow_nested)
         if duckdb_connection is not None and not isinstance(
             duckdb_connection, duckdb.DuckDBPyConnection
         ):
@@ -91,7 +112,7 @@ class DuckDBEngine(Engine):
             isinstance(data, duckdb.DuckDBPyRelation)
             and duckdb_connection is None
         ):
-            return cls(None, "_t", relation=data)
+            return cls(None, "_t", relation=data, allow_nested=allow_nested)
         if duckdb_connection is not None:
             return cls(
                 None,
@@ -99,7 +120,9 @@ class DuckDBEngine(Engine):
                 relation=_relation_from_connection(
                     duckdb_connection,
                     data,
+                    allow_nested=allow_nested,
                 ),
+                allow_nested=allow_nested,
             )
 
         con = duckdb.connect(database=":memory:")
@@ -108,8 +131,10 @@ class DuckDBEngine(Engine):
             if threads is not None:
                 con.execute("SET threads = ?", [threads])
 
-            _register_private_source(con, view, data)
-            return cls(con, view)
+            _register_private_source(
+                con, view, data, allow_nested=allow_nested
+            )
+            return cls(con, view, allow_nested=allow_nested)
         except Exception:
             con.close()
             raise
@@ -465,7 +490,7 @@ class DuckDBEngine(Engine):
         return ", ".join(keys)
 
 
-def _file_source(path: Path) -> str:
+def _file_source(path: Path, *, allow_nested: bool = False) -> str:
     """Return the DuckDB reader expression for a local file."""
     suffix = path.suffix.lower()
     literal = quote_literal(str(path))
@@ -475,7 +500,11 @@ def _file_source(path: Path) -> str:
     if suffix in {".parquet", ".pq"}:
         return f"read_parquet({literal})"
     if suffix in {".ndjson", ".jsonl"}:
-        scalar_types = require_valid_json_lines(path)
+        scalar_types = require_valid_json_lines(
+            path, allow_nested=allow_nested
+        )
+        if allow_nested:
+            return f"read_json_auto({literal}, format = 'newline_delimited')"
         dtypes = {
             "string": "VARCHAR",
             "integer": "BIGINT",
@@ -496,12 +525,17 @@ def _file_source(path: Path) -> str:
 def _relation_from_connection(
     connection: duckdb.DuckDBPyConnection,
     data: Any,
+    *,
+    allow_nested: bool = False,
 ) -> duckdb.DuckDBPyRelation:
     """Bind a supported input to a caller-owned DuckDB connection."""
     if isinstance(data, duckdb.DuckDBPyRelation):
+        # Replacement scan verifies that the borrowed relation belongs to this
+        # caller-owned connection without collecting it.
         return connection.sql("SELECT * FROM data")
     if isinstance(data, str | Path):
-        return connection.sql(f"SELECT * FROM {_file_source(Path(data))}")
+        source = _file_source(Path(data), allow_nested=allow_nested)
+        return connection.sql(f"SELECT * FROM {source}")
     if type(data).__module__.startswith("pandas"):
         return connection.from_df(data)
     if type(data).__module__.startswith("polars"):
@@ -511,14 +545,24 @@ def _relation_from_connection(
     raise TypeError(f"cannot build DuckDBEngine from {type(data).__name__}")
 
 
+def _connection_relation(
+    connection: duckdb.DuckDBPyConnection | None, view: str
+) -> duckdb.DuckDBPyRelation:
+    if connection is None:  # pragma: no cover - constructor invariant
+        raise RuntimeError("DuckDB engine has no private connection")
+    return connection.sql(f"SELECT * FROM {quote_identifier(view)}")
+
+
 def _register_private_source(
     connection: duckdb.DuckDBPyConnection,
     view: str,
     data: Any,
+    *,
+    allow_nested: bool = False,
 ) -> None:
     """Register a supported input on an engine-owned connection."""
     if isinstance(data, str | Path):
-        source = _file_source(Path(data))
+        source = _file_source(Path(data), allow_nested=allow_nested)
         connection.execute(
             f"CREATE VIEW {quote_identifier(view)} AS SELECT * FROM {source}"
         )
@@ -534,9 +578,9 @@ def _register_private_source(
         )
 
 
-def _validate_source_columns(data: Any) -> None:
+def _validate_source_columns(data: Any, *, allow_nested: bool = False) -> None:
     module = type(data).__module__
-    if module.startswith("pandas"):
+    if module.startswith("pandas") and not allow_nested:
         validate_pandas_columns(data)
     elif module.startswith("polars"):
         validate_column_names(data.columns)

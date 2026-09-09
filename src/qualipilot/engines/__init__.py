@@ -33,6 +33,7 @@ def build_engine(
     duckdb_threads: int | None = None,
     spark_session: SparkSession | None = None,
     duckdb_connection: DuckDBPyConnection | None = None,
+    allow_nested: bool = False,
 ) -> Engine:
     """Pick the right engine for the given input + requested backend.
 
@@ -62,9 +63,9 @@ def build_engine(
         raise ValueError("duckdb_connection requires the duckdb engine")
 
     if resolved == "polars":
-        return PolarsEngine.from_any(data)
+        return PolarsEngine.from_any(data, allow_nested=allow_nested)
     if resolved == "pandas":
-        return PandasEngine.from_any(data)
+        return PandasEngine.from_any(data, allow_nested=allow_nested)
     if resolved == "duckdb":
         from qualipilot.engines.duckdb_engine import DuckDBEngine
 
@@ -72,15 +73,20 @@ def build_engine(
             data,
             threads=duckdb_threads,
             duckdb_connection=duckdb_connection,
+            allow_nested=allow_nested,
         )
     if resolved == "dask":
         from qualipilot.engines.dask_engine import DaskEngine
 
-        return DaskEngine.from_any(data, npartitions=npartitions)
+        return DaskEngine.from_any(
+            data, npartitions=npartitions, allow_nested=allow_nested
+        )
     if resolved == "spark":
         from qualipilot.engines.spark_engine import SparkEngine
 
-        return SparkEngine.from_any(data, spark_session=spark_session)
+        return SparkEngine.from_any(
+            data, spark_session=spark_session, allow_nested=allow_nested
+        )
 
     raise ValueError(f"unknown engine kind: {kind!r}")
 

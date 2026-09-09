@@ -4,7 +4,24 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [3.5.0] - 2026-09-09
+
 ### Added
+
+- Versioned quality-contract rule packs with safe column comparisons,
+  composite caller-provided foreign keys, schema baseline policies, and
+  explicitly registered application checks.
+- Typed contract and Iceberg payload views, source-redacted Prometheus text
+  metrics, and a read-only caller-session Iceberg metadata check.
+- Opt-in deterministic JSON normalization for nested values. Default scalar
+  rejection remains unchanged for compatibility.
+
+### Changed
+
+- Documentation now describes quality contracts as the primary SDK surface;
+  linkage, NER, LLM, and Lambda features remain optional integrations.
+
+### Quality gates
 
 - Persisted-Parquet distributed correctness benchmarking with Dask child-
   process evidence, Spark event-log executor/task evidence, and an optional

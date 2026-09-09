@@ -40,7 +40,8 @@ jobs:
           scripts/bench_checker.py scripts/bench_distributed.py
           scripts/bench_lambda.py scripts/bench_linking.py
           scripts/bench_ner.py scripts/bench_spark.py
-          scripts/check_lambda_container.py
+          scripts/check_lambda_container.py scripts/contract_evidence.py
+          tests/test_payload_types.py
 
   test:
     runs-on: ${{ matrix.os }}
@@ -70,6 +71,11 @@ jobs:
           --extra ollama
           --extra openai
       - run: uv run pytest -q
+      - name: contract fixture evidence
+        if: matrix.os == 'ubuntu-24.04' && matrix.python-version == '3.12'
+        run: >-
+          uv run python scripts/contract_evidence.py
+          --output "$RUNNER_TEMP/contract-evidence.json"
       - name: persisted Dask multiprocessing gate
         if: matrix.os == 'ubuntu-24.04' && matrix.python-version == '3.12'
         run: >-
@@ -94,6 +100,7 @@ jobs:
           path: |
             ${{ runner.temp }}/distributed-dask.json
             ${{ runner.temp }}/soak-*.json
+            ${{ runner.temp }}/contract-evidence.json
           if-no-files-found: warn
       - name: upload coverage
         if: matrix.os == 'ubuntu-24.04' && matrix.python-version == '3.12'
@@ -187,6 +194,12 @@ jobs:
       - run: uv pip install --python .venv/bin/python "pyspark==${{ matrix.pyspark }}"
       - run: java -version
       - run: uv run --no-sync pytest -q tests/test_spark_engine.py --no-cov
+      - name: Iceberg local Hadoop-catalog integration
+        if: matrix.pyspark == '3.5.6'
+        run: >-
+          uv run --no-sync pytest -q -m integration
+          tests/test_iceberg_integration.py --no-cov
+          --junitxml "$RUNNER_TEMP/iceberg-integration.xml"
       - name: persisted Spark standalone-worker gate
         run: >-
           uv run --no-sync python scripts/bench_distributed.py
@@ -207,6 +220,7 @@ jobs:
           path: |
             ${{ runner.temp }}/distributed-spark.json
             ${{ runner.temp }}/soak-spark.json
+            ${{ runner.temp }}/iceberg-integration.xml
           if-no-files-found: warn
 
   ner-quality:

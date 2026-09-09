@@ -83,15 +83,23 @@ def require_unique_csv_columns(path: str | Path) -> list[str] | None:
     return expected
 
 
-def require_valid_json_lines(path: str | Path) -> dict[str, str]:
-    """Validate newline-delimited, flat JSON objects without losing keys."""
+def require_valid_json_lines(
+    path: str | Path, *, allow_nested: bool = False
+) -> dict[str, str]:
+    """Validate newline-delimited JSON objects without losing keys.
+
+    Nested values remain rejected by default. Opt-in callers retain the same
+    duplicate-key, finite-number, Unicode, and record-shape validation.
+    """
     columns: dict[str, str] = {}
     expected_columns: set[str] | None = None
     for name, source in _text_sources(path, encoding="utf-8"):
         for line_number, line in enumerate(source, 1):
             if not line.strip():
                 continue
-            record = _load_json_record(line, name, line_number)
+            record = _load_json_record(
+                line, name, line_number, allow_nested=allow_nested
+            )
             record_columns = set(record)
             if (
                 expected_columns is not None
@@ -103,7 +111,7 @@ def require_valid_json_lines(path: str | Path) -> dict[str, str]:
                 )
             expected_columns = record_columns
             for column, value in record.items():
-                family = _json_scalar_family(value)
+                family = _json_family(value, allow_nested=allow_nested)
                 columns[column] = _merge_json_family(
                     columns.get(column, "null"),
                     family,
@@ -123,6 +131,8 @@ def _load_json_record(
     line: str,
     name: str,
     line_number: int,
+    *,
+    allow_nested: bool,
 ) -> dict[str, Any]:
     try:
         record = json.loads(
@@ -148,10 +158,34 @@ def _load_json_record(
             f"JSONL record on line {line_number} in {name} "
             "must contain at least one column"
         )
-    if any(isinstance(value, (dict, list)) for value in record.values()):
-        raise ValueError("JSONL input must contain only scalar values")
+    for value in record.values():
+        _validate_json_value(value, allow_nested=allow_nested)
     validate_column_names(list(record))
     return record
+
+
+def _json_family(value: Any, *, allow_nested: bool) -> str:
+    if isinstance(value, dict | list):
+        if not allow_nested:
+            raise ValueError("JSONL input must contain only scalar values")
+        return "nested"
+    return _json_scalar_family(value)
+
+
+def _validate_json_value(value: Any, *, allow_nested: bool) -> None:
+    if isinstance(value, dict):
+        if not allow_nested:
+            raise ValueError("JSONL input must contain only scalar values")
+        for child in value.values():
+            _validate_json_value(child, allow_nested=True)
+        return
+    if isinstance(value, list):
+        if not allow_nested:
+            raise ValueError("JSONL input must contain only scalar values")
+        for child in value:
+            _validate_json_value(child, allow_nested=True)
+        return
+    _json_scalar_family(value)
 
 
 def _merge_json_family(
@@ -166,6 +200,13 @@ def _merge_json_family(
         return previous
     if previous == "null":
         return family
+    if "nested" in {previous, family}:
+        if previous == "nested" and family == "nested":
+            return "nested"
+        raise ValueError(
+            "JSONL columns must use one JSON type "
+            f"(column {column!r}, line {line_number} in {name})"
+        )
     if {previous, family} <= {"integer", "number"}:
         return "number" if "number" in {previous, family} else "integer"
     if previous != family:

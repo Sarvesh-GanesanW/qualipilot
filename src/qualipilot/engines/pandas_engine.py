@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any, cast
 
@@ -24,20 +25,33 @@ class PandasEngine(Engine):
 
     name = "pandas"
 
-    def __init__(self, df: pd.DataFrame) -> None:
-        validate_pandas_columns(df)
+    def __init__(
+        self, df: pd.DataFrame, *, allow_nested: bool = False
+    ) -> None:
+        self.nested_normalized_columns = (
+            _nested_columns(df) if allow_nested else []
+        )
+        if allow_nested:
+            df = _normalise_nested(df)
+        else:
+            validate_pandas_columns(df)
         self._df = df
 
     @classmethod
-    def from_any(cls, data: Any) -> PandasEngine:
+    def from_any(
+        cls, data: Any, *, allow_nested: bool = False
+    ) -> PandasEngine:
         if isinstance(data, pd.DataFrame):
-            return cls(data)
+            return cls(data, allow_nested=allow_nested)
         if type(data).__module__.startswith("polars"):
-            return cls(data.to_pandas())
+            return cls(data.to_pandas(), allow_nested=allow_nested)
         if type(data).__module__.startswith("pyarrow"):
-            return cls(data.to_pandas())
+            return cls(data.to_pandas(), allow_nested=allow_nested)
         if isinstance(data, str | Path):
-            return cls(_read_path(Path(data)))
+            return cls(
+                _read_path(Path(data), allow_nested=allow_nested),
+                allow_nested=allow_nested,
+            )
         raise TypeError(
             f"cannot build PandasEngine from {type(data).__name__}"
         )
@@ -194,7 +208,7 @@ class PandasEngine(Engine):
         return keys.duplicated(keep=False)
 
 
-def _read_path(path: Path) -> pd.DataFrame:
+def _read_path(path: Path, *, allow_nested: bool = False) -> pd.DataFrame:
     suffix = path.suffix.lower()
     if suffix == ".csv":
         require_unique_csv_columns(path)
@@ -207,22 +221,22 @@ def _read_path(path: Path) -> pd.DataFrame:
     if suffix in {".parquet", ".pq"}:
         return pd.read_parquet(path)
     if suffix in {".ndjson", ".jsonl"}:
-        scalar_types = require_valid_json_lines(path)
-        dtypes = {
-            "string": "string",
-            "integer": "Int64",
-            "number": "Float64",
-            "boolean": "boolean",
-        }
-        return pd.read_json(
-            path,
-            lines=True,
-            dtype={
+        scalar_types = require_valid_json_lines(
+            path, allow_nested=allow_nested
+        )
+        kwargs: dict[str, Any] = {"lines": True, "convert_dates": False}
+        if not allow_nested:
+            dtypes = {
+                "string": "string",
+                "integer": "Int64",
+                "number": "Float64",
+                "boolean": "boolean",
+            }
+            kwargs["dtype"] = {
                 column: dtypes[family]
                 for column, family in scalar_types.items()
-            },
-            convert_dates=False,
-        )
+            }
+        return pd.read_json(path, **kwargs)
     raise ValueError(f"unsupported file type: {suffix}")
 
 
@@ -233,3 +247,29 @@ def _object_families(series: pd.Series) -> set[str]:
     if family == "mixed-integer-float":
         return {"integer", "floating"}
     return {family}
+
+
+def _normalise_nested(df: pd.DataFrame) -> pd.DataFrame:
+    frame = df.copy()
+    for column in frame.columns:
+        if pd.api.types.is_object_dtype(frame[column].dtype):
+            frame[column] = frame[column].map(_nested_json)
+    validate_pandas_columns(frame)
+    return frame
+
+
+def _nested_columns(df: pd.DataFrame) -> list[str]:
+    return [
+        column
+        for column in df.columns
+        if pd.api.types.is_object_dtype(df[column].dtype)
+        and df[column]
+        .map(lambda value: isinstance(value, dict | list | tuple))
+        .any()
+    ]
+
+
+def _nested_json(value: Any) -> Any:
+    if isinstance(value, dict | list | tuple):
+        return json.dumps(value, sort_keys=True, separators=(",", ":"))
+    return value
